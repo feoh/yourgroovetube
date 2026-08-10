@@ -34,6 +34,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
 }
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let controls = if area.width >= 100 {
+        "  / search  n more  Enter play  m mode  Space pause  s save  ? help  q quit"
+    } else {
+        "  / search  ? help  q quit"
+    };
     let title = Line::from(vec![
         Span::styled(
             " yourgroovetube ",
@@ -42,30 +47,38 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("  / search  n more  Enter play  m mode  Space pause  s save  ? help  q quit"),
+        Span::raw(controls),
     ]);
     let mode = format!("mode: {} ", app.playback.mode.label());
+    let header = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(10),
+            Constraint::Length(mode.chars().count() as u16),
+        ])
+        .split(area);
     frame.render_widget(
         Paragraph::new(title)
             .block(Block::default().borders(Borders::BOTTOM))
             .alignment(Alignment::Left),
-        area,
+        header[0],
     );
-    let mode_area = Rect {
-        x: area.right().saturating_sub(mode.len() as u16),
-        y: area.y,
-        width: mode.len() as u16,
-        height: 1,
-    };
     frame.render_widget(
-        Paragraph::new(mode).style(Style::default().fg(Color::Yellow)),
-        mode_area,
+        Paragraph::new(mode)
+            .style(Style::default().fg(Color::Yellow))
+            .alignment(Alignment::Right)
+            .block(Block::default().borders(Borders::BOTTOM)),
+        header[1],
     );
 }
 
 fn render_browser(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
+    let panes = Layout::default()
+        .direction(if area.width >= 80 {
+            Direction::Horizontal
+        } else {
+            Direction::Vertical
+        })
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(area);
 
@@ -96,7 +109,7 @@ fn render_browser(frame: &mut Frame<'_>, area: Rect, app: &App) {
     if !app.videos.is_empty() {
         state.select(Some(app.selected));
     }
-    frame.render_stateful_widget(list, columns[0], &mut state);
+    frame.render_stateful_widget(list, panes[0], &mut state);
 
     let details = app.selected_video().map_or_else(
         || "Select a search result to view its metadata.".to_owned(),
@@ -116,7 +129,7 @@ fn render_browser(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 .title(" Details / thumbnail ")
                 .borders(Borders::ALL),
         ),
-        columns[1],
+        panes[1],
     );
 }
 
@@ -228,5 +241,24 @@ mod tests {
         assert!(rendered.contains("yourgroovetube"));
         assert!(rendered.contains("audio + thumbnail") || rendered.contains("mode: video"));
         assert!(rendered.contains("Configure a YouTube Data API key"));
+    }
+
+    #[test]
+    fn narrow_terminals_stack_browser_and_details() {
+        let backend = TestBackend::new(60, 24);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(never) => match never {},
+        };
+        let app = App::new(false);
+
+        if terminal.draw(|frame| draw(frame, &app)).is_err() {
+            panic!("narrow frame should render");
+        }
+        let rendered = terminal.backend().to_string();
+
+        assert!(rendered.contains("Popular videos"));
+        assert!(rendered.contains("Details / thumbnail"));
+        assert!(rendered.contains("Now playing"));
     }
 }
