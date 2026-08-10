@@ -63,6 +63,15 @@ Install the latest source revision with Cargo:
 cargo install --git https://github.com/feoh/yourgroovetube
 ```
 
+To build from a local source checkout and install the resulting release binary:
+
+```console
+cargo install --path . --locked --force
+```
+
+This installs `yourgroovetube` to `~/.cargo/bin`; ensure that directory is on
+`PATH`.
+
 Tagged releases publish Linux x86-64, macOS Apple Silicon, and Windows x86-64
 archives on the [GitHub Releases](https://github.com/feoh/yourgroovetube/releases)
 page.
