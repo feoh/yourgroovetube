@@ -2,7 +2,7 @@
 name = "yourgroovetube"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.90"
 description = "A keyboard-driven terminal YouTube viewer"
 license = "MIT"
 readme = "README.md"
@@ -17,11 +17,28 @@ clap = { version = "4.6.2", features = ["derive"] }
 crossterm = "0.29.0"
 directories = "6.0.0"
 html-escape = "0.2.13"
+image = { version = "0.25.10", default-features = false, features = [
+  "jpeg",
+  "png",
+  "webp",
+] }
 ratatui = "0.30.0"
-reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls"] }
+ratatui-image = { version = "11.0.6", default-features = false, features = [
+  "crossterm",
+] }
+reqwest = { version = "0.12.28", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 tempfile = "3.24.0"
 thiserror = "2.0.18"
-tokio = { version = "1.52.0", features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
+tokio = { version = "1.52.0", features = [
+  "io-util",
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "time",
+] }
 toml = "1.1.0"

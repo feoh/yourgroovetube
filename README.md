@@ -24,8 +24,8 @@ A keyboard-driven terminal YouTube viewer built with Rust and
 ## Current status
 
 The repository contains a runnable application with live, official YouTube Data
-API discovery and persistent mpv playback. Terminal thumbnail rendering,
-playlist queues, and Plex import remain tracked Witan milestones.
+API discovery, persistent mpv playback, and terminal thumbnails. Playlist queues
+and Plex import remain tracked Witan milestones.
 
 The application already includes:
 
@@ -35,6 +35,8 @@ The application already includes:
 - persistent mpv playback controlled through newline-delimited JSON IPC;
 - yt-dlp-backed YouTube URL resolution, pause/resume, and video/audio switching;
 - observed playback position, duration, end state, and IPC errors;
+- automatic Kitty, iTerm2, Sixel, or Unicode half-block thumbnails;
+- audio mode that keeps the current video's thumbnail visible while `vid=no`;
 - keyboard/search state and a responsive Ratatui layout;
 - a live now-playing progress gauge;
 - platform-standard configuration loading;
@@ -43,7 +45,7 @@ The application already includes:
 
 ## Requirements
 
-- Rust 1.88 or newer when building from source
+- Rust 1.90 or newer when building from source
 - [`mpv`](https://mpv.io/) on `PATH`
 - [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on `PATH`
 - a YouTube Data API v3 key for discovery
@@ -54,6 +56,13 @@ The application already includes:
 git clone https://github.com/feoh/yourgroovetube.git
 cd yourgroovetube
 cargo run
+```
+
+Force portable Unicode half-block thumbnails when terminal image detection is
+unwanted:
+
+```console
+cargo run -- --no-images
 ```
 
 Inspect prerequisites and the configuration path:

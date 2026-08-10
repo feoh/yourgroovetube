@@ -44,9 +44,11 @@ newline-delimited JSON, records command failures, and publishes observed
 `time-pos`, `duration`, `pause`, `eof-reached`, and `idle-active` properties.
 The UI refreshes the shared snapshot at ten frames per second.
 
-Video mode allows mpv to render normally. Audio mode sets `vid=no`; the terminal
-thumbnail renderer remains a separate milestone. Mode is a playback concern
-rather than a search or catalog concern.
+Video mode allows mpv to render normally. Audio mode sets `vid=no` and pins the
+currently playing video's thumbnail in the TUI. The renderer detects Kitty,
+iTerm2, and Sixel support through `ratatui-image`, with a Unicode half-block
+fallback and a `--no-images` override. Mode is a playback concern rather than a
+search or catalog concern.
 
 ## Plex import
 
@@ -66,6 +68,8 @@ The default destination is `/nas/video/Saved Youtube Videos`.
 - API credentials and OAuth tokens must never be committed.
 - mpv JSON IPC is unauthenticated and command-capable, so its endpoint must be
   local, private, unpredictable, and deleted at shutdown.
+- Thumbnail fetching accepts only credential-free HTTPS URLs on `ytimg.com`
+  hosts, revalidates redirects, and rejects responses larger than 10 MiB.
 - Video titles are untrusted input and must never become unsanitized shell or
   filesystem arguments.
 - Child processes receive argument arrays directly; no shell interpolation.

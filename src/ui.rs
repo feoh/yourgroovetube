@@ -5,8 +5,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::app::App;
+use crate::artwork::ArtworkState;
+use crate::models::PlaybackMode;
 
-pub fn draw(frame: &mut Frame<'_>, app: &App) {
+pub fn draw(frame: &mut Frame<'_>, app: &App, artwork: Option<&mut ArtworkState>) {
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -18,7 +20,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         .split(frame.area());
 
     render_header(frame, sections[0], app);
-    render_browser(frame, sections[1], app);
+    render_browser(frame, sections[1], app, artwork);
     render_player(frame, sections[2], app);
     frame.render_widget(
         Paragraph::new(app.status.as_str()).style(Style::default().fg(Color::DarkGray)),
@@ -72,7 +74,12 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     );
 }
 
-fn render_browser(frame: &mut Frame<'_>, area: Rect, app: &App) {
+fn render_browser(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    app: &App,
+    artwork: Option<&mut ArtworkState>,
+) {
     let panes = Layout::default()
         .direction(if area.width >= 80 {
             Direction::Horizontal
@@ -123,13 +130,31 @@ fn render_browser(frame: &mut Frame<'_>, area: Rect, app: &App) {
             )
         },
     );
+    let show_artwork = artwork.is_some() && panes[1].width >= 24 && panes[1].height >= 10;
+    let detail_panes = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(if show_artwork {
+            [Constraint::Percentage(60), Constraint::Percentage(40)]
+        } else {
+            [Constraint::Length(0), Constraint::Percentage(100)]
+        })
+        .split(panes[1]);
+    if let Some(artwork) = artwork.filter(|_| show_artwork) {
+        let title = if app.playback.mode == PlaybackMode::Audio && app.playback.current.is_some() {
+            " Now playing thumbnail "
+        } else {
+            " Thumbnail "
+        };
+        let block = Block::default().title(title).borders(Borders::ALL);
+        let inner = block.inner(detail_panes[0]);
+        frame.render_widget(block, detail_panes[0]);
+        artwork.render(frame, inner);
+    }
     frame.render_widget(
-        Paragraph::new(details).wrap(Wrap { trim: true }).block(
-            Block::default()
-                .title(" Details / thumbnail ")
-                .borders(Borders::ALL),
-        ),
-        panes[1],
+        Paragraph::new(details)
+            .wrap(Wrap { trim: true })
+            .block(Block::default().title(" Details ").borders(Borders::ALL)),
+        detail_panes[1],
     );
 }
 
@@ -233,7 +258,7 @@ mod tests {
         };
         let app = App::new(false);
 
-        if terminal.draw(|frame| draw(frame, &app)).is_err() {
+        if terminal.draw(|frame| draw(frame, &app, None)).is_err() {
             panic!("frame should render");
         }
         let rendered = terminal.backend().to_string();
@@ -241,6 +266,30 @@ mod tests {
         assert!(rendered.contains("yourgroovetube"));
         assert!(rendered.contains("audio + thumbnail") || rendered.contains("mode: video"));
         assert!(rendered.contains("Configure a YouTube Data API key"));
+    }
+
+    #[test]
+    fn wide_terminals_render_the_thumbnail_pane() {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(never) => match never {},
+        };
+        let app = App::new(false);
+        let Ok(mut artwork) = ArtworkState::halfblocks() else {
+            panic!("half-block artwork should initialize");
+        };
+
+        if terminal
+            .draw(|frame| draw(frame, &app, Some(&mut artwork)))
+            .is_err()
+        {
+            panic!("artwork frame should render");
+        }
+        let rendered = terminal.backend().to_string();
+
+        assert!(rendered.contains("Thumbnail"));
+        assert!(rendered.contains("Details"));
     }
 
     #[test]
@@ -252,13 +301,13 @@ mod tests {
         };
         let app = App::new(false);
 
-        if terminal.draw(|frame| draw(frame, &app)).is_err() {
+        if terminal.draw(|frame| draw(frame, &app, None)).is_err() {
             panic!("narrow frame should render");
         }
         let rendered = terminal.backend().to_string();
 
         assert!(rendered.contains("Popular videos"));
-        assert!(rendered.contains("Details / thumbnail"));
+        assert!(rendered.contains("Details"));
         assert!(rendered.contains("Now playing"));
     }
 }
