@@ -4,14 +4,14 @@ _Last reviewed: 2026-08-10. This is a project risk statement, not legal advice._
 
 ## Official APIs used where possible
 
-The project intends to use the supported YouTube Data API v3 for:
+The project uses the supported YouTube Data API v3 for:
 
 - title/tag discovery through [`search.list`](https://developers.google.com/youtube/v3/docs/search/list);
 - duration, status, and metadata hydration through
   [`videos.list`](https://developers.google.com/youtube/v3/docs/videos/list);
 - regional default content through `chart=mostPopular`; and
-- potentially user-authorized subscription metadata through Google's installed
-  application OAuth flow.
+A later milestone may add user-authorized subscription metadata through
+Google's installed application OAuth flow.
 
 `search.list` costs 100 quota units per call, while `videos.list` costs one.
 Search is therefore explicit rather than request-per-keystroke. The official API

@@ -26,12 +26,15 @@ collapsing into one component.
 Search uses `search.list(type=video)` only after explicit submission because it
 costs 100 quota units per call. Returned IDs are hydrated in a single
 `videos.list(part=snippet,contentDetails,status)` call, which costs one unit.
-Metadata is cached conservatively and pagination is explicit.
+Pages are cached in memory for five minutes and pagination is explicit. API
+errors deliberately omit request URLs so query-string credentials cannot leak
+through error displays.
 
 The YouTube Data API does not expose the signed-in user's personalized Home
-recommendations. The initial default screen will therefore use
-`videos.list(chart=mostPopular)` by region. A later OAuth milestone may offer an
-app-defined feed derived from subscriptions, clearly labeled as such.
+recommendations. The default screen therefore uses
+`videos.list(chart=mostPopular)` for the configured two-letter region. A later
+OAuth milestone may offer an app-defined feed derived from subscriptions,
+clearly labeled as such.
 
 ## Playback
 

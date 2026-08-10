@@ -5,3 +5,4 @@ pub mod models;
 pub mod playback;
 pub mod provider;
 pub mod ui;
+pub mod youtube;

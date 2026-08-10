@@ -9,6 +9,7 @@ pub struct Video {
     pub duration_seconds: Option<u64>,
     pub published_at: Option<String>,
     pub thumbnail_url: Option<String>,
+    pub embeddable: Option<bool>,
     #[serde(default)]
     pub tags: Vec<String>,
 }

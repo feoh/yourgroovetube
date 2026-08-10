@@ -23,15 +23,17 @@ A keyboard-driven terminal YouTube viewer built with Rust and
 
 ## Current status
 
-The repository currently contains the first runnable application shell and its
-provider/playback/save boundaries. Search, mpv IPC, terminal images, and Plex
-import are tracked as Witan milestones and are not connected yet.
+The repository contains a runnable application shell with live, official
+YouTube Data API discovery. Persistent mpv IPC, terminal images, and Plex import
+remain tracked Witan milestones.
 
-The shell already includes:
+The application already includes:
 
+- a regional `mostPopular` default feed;
+- explicit title/tag search with batched metadata hydration;
+- five-minute in-memory result caching and explicit pagination;
 - keyboard/search state and a responsive Ratatui layout;
-- the video/audio-mode domain model;
-- a now-playing progress gauge;
+- the video/audio-mode domain model and now-playing progress gauge;
 - platform-standard configuration loading;
 - `doctor` and `config path` commands; and
 - tests plus GitHub Actions validation.
@@ -70,6 +72,8 @@ Alternatively, create the file printed by `yourgroovetube config path`:
 ```toml
 [youtube]
 api_key = "your-key"
+region_code = "US"
+results_per_page = 25
 
 [plex]
 library_dir = "/nas/video/Saved Youtube Videos"
@@ -83,6 +87,7 @@ Do not commit API keys, tokens, cookies, or captured YouTube responses.
 | --- | --- |
 | `/` | Search by title or tags |
 | `j`/`k` or arrows | Select a video |
+| `n` | Load the next result page |
 | `Enter` or `p` | Play the selected video |
 | `m` | Toggle video / audio-with-thumbnail mode |
 | `Space` | Pause or resume |

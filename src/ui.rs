@@ -42,7 +42,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("  / search  Enter play  m mode  Space pause  s save  ? help  q quit"),
+        Span::raw("  / search  n more  Enter play  m mode  Space pause  s save  ? help  q quit"),
     ]);
     let mode = format!("mode: {} ", app.playback.mode.label());
     frame.render_widget(
@@ -82,8 +82,9 @@ fn render_browser(frame: &mut Frame<'_>, area: Rect, app: &App) {
             })
             .collect()
     };
+    let list_title = format!(" {} ", app.feed_label);
     let list = List::new(items)
-        .block(Block::default().title(" Videos ").borders(Borders::ALL))
+        .block(Block::default().title(list_title).borders(Borders::ALL))
         .highlight_style(
             Style::default()
                 .fg(Color::Black)
@@ -164,6 +165,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
             "/       Search by title or tags\n\
              j/k     Move through videos\n\
              Enter   Play selected video\n\
+             n       Load the next result page\n\
              m       Toggle video / audio + thumbnail\n\
              Space   Pause or resume\n\
              s       Save current video to Plex directory\n\

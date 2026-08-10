@@ -8,7 +8,7 @@ use thiserror::Error;
 
 const API_KEY_ENV: &str = "YOURGROOVETUBE_YOUTUBE_API_KEY";
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub youtube: YoutubeConfig,
@@ -16,9 +16,31 @@ pub struct AppConfig {
     pub plex: PlexConfig,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct YoutubeConfig {
     pub api_key: Option<String>,
+    #[serde(default = "default_region_code")]
+    pub region_code: String,
+    #[serde(default = "default_results_per_page")]
+    pub results_per_page: u8,
+}
+
+impl Default for YoutubeConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            region_code: default_region_code(),
+            results_per_page: default_results_per_page(),
+        }
+    }
+}
+
+fn default_region_code() -> String {
+    "US".to_owned()
+}
+
+const fn default_results_per_page() -> u8 {
+    25
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -86,6 +108,8 @@ mod tests {
         let config = AppConfig {
             youtube: YoutubeConfig {
                 api_key: Some("local-development-key".to_owned()),
+                region_code: "CA".to_owned(),
+                results_per_page: 40,
             },
             plex: PlexConfig::default(),
         };
@@ -97,7 +121,7 @@ mod tests {
             panic!("config should parse");
         };
 
-        assert_eq!(decoded, config);
+        assert!(decoded == config);
     }
 
     #[test]

@@ -6,7 +6,9 @@ use clap::{Parser, Subcommand};
 use crossterm::event::{self, Event};
 use yourgroovetube::app::{Action, App};
 use yourgroovetube::config::{AppConfig, config_path};
+use yourgroovetube::provider::{SearchQuery, VideoCatalog};
 use yourgroovetube::ui;
+use yourgroovetube::youtube::YoutubeCatalog;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -49,15 +51,37 @@ async fn main() -> Result<()> {
 
 async fn run_app() -> Result<()> {
     let config = AppConfig::load().context("could not load yourgroovetube configuration")?;
-    let mut app = App::new(config.youtube_api_key().is_some());
+    let catalog = config
+        .youtube_api_key()
+        .map(|api_key| {
+            YoutubeCatalog::new(
+                api_key,
+                config.youtube.region_code.clone(),
+                config.youtube.results_per_page,
+            )
+        })
+        .transpose()
+        .context("could not configure the YouTube catalog")?;
+    let mut app = App::new(catalog.is_some());
+    if let Some(catalog) = catalog.as_ref() {
+        app.status = "Loading popular videos…".to_owned();
+        match catalog.default_feed(None).await {
+            Ok(page) => app.replace_catalog_page(page, None),
+            Err(error) => app.status = format!("Could not load popular videos: {error}"),
+        }
+    }
 
     let mut terminal = ratatui::init();
-    let result = run_event_loop(&mut terminal, &mut app).await;
+    let result = run_event_loop(&mut terminal, &mut app, catalog.as_ref()).await;
     ratatui::restore();
     result
 }
 
-async fn run_event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
+async fn run_event_loop(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut App,
+    catalog: Option<&YoutubeCatalog>,
+) -> Result<()> {
     terminal.draw(|frame| ui::draw(frame, app))?;
 
     while !app.should_quit {
@@ -72,7 +96,40 @@ async fn run_event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) 
             Action::None => {}
             Action::Quit => app.should_quit = true,
             Action::Search(query) => {
-                app.status = format!("Search queued for: {query}");
+                let Some(catalog) = catalog else {
+                    app.status = "Configure a YouTube Data API key before searching".to_owned();
+                    terminal.draw(|frame| ui::draw(frame, app))?;
+                    continue;
+                };
+                app.status = format!("Searching for {query}…");
+                terminal.draw(|frame| ui::draw(frame, app))?;
+                match catalog.search(SearchQuery::new(query.clone())).await {
+                    Ok(page) => app.replace_catalog_page(page, Some(query)),
+                    Err(error) => app.status = format!("Search failed: {error}"),
+                }
+            }
+            Action::NextPage => {
+                let Some(catalog) = catalog else {
+                    app.status = "Configure a YouTube Data API key before loading more".to_owned();
+                    terminal.draw(|frame| ui::draw(frame, app))?;
+                    continue;
+                };
+                let Some(page_token) = app.next_page_token.clone() else {
+                    continue;
+                };
+                app.status = "Loading more videos…".to_owned();
+                terminal.draw(|frame| ui::draw(frame, app))?;
+                let result = if let Some(query) = app.active_search.clone() {
+                    let mut search = SearchQuery::new(query);
+                    search.page_token = Some(page_token);
+                    catalog.search(search).await
+                } else {
+                    catalog.default_feed(Some(page_token)).await
+                };
+                match result {
+                    Ok(page) => app.append_catalog_page(page),
+                    Err(error) => app.status = format!("Could not load more videos: {error}"),
+                }
             }
             Action::Play(video) => {
                 app.start_playback(video);
@@ -112,6 +169,10 @@ fn run_doctor() -> Result<()> {
             "  miss YouTube Data API key: set YOURGROOVETUBE_YOUTUBE_API_KEY or config.toml"
         ),
     }
+    println!(
+        "  info YouTube region/page size: {}/{}",
+        config.youtube.region_code, config.youtube.results_per_page
+    );
     println!(
         "  info Plex destination: {}",
         config.plex.library_dir.display()

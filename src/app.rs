@@ -2,12 +2,14 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 
 use crate::models::Video;
 use crate::playback::PlaybackSnapshot;
+use crate::provider::CatalogPage;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Action {
     None,
     Quit,
     Search(String),
+    NextPage,
     Play(Video),
     TogglePause,
     SaveToPlex,
@@ -22,6 +24,9 @@ pub struct App {
     pub help_visible: bool,
     pub should_quit: bool,
     pub status: String,
+    pub feed_label: String,
+    pub active_search: Option<String>,
+    pub next_page_token: Option<String>,
     pub playback: PlaybackSnapshot,
 }
 
@@ -40,6 +45,9 @@ impl App {
             help_visible: false,
             should_quit: false,
             status,
+            feed_label: "Popular videos".to_owned(),
+            active_search: None,
+            next_page_token: None,
             playback: PlaybackSnapshot::default(),
         }
     }
@@ -48,9 +56,23 @@ impl App {
         self.videos.get(self.selected)
     }
 
-    pub fn replace_videos(&mut self, videos: Vec<Video>) {
-        self.videos = videos;
+    pub fn replace_catalog_page(&mut self, page: CatalogPage, search: Option<String>) {
+        self.videos = page.videos;
         self.selected = 0;
+        self.next_page_token = page.next_page_token;
+        self.feed_label = search.as_ref().map_or_else(
+            || "Popular videos".to_owned(),
+            |query| format!("Search · {query}"),
+        );
+        self.active_search = search;
+        self.status = format!("Loaded {} videos", self.videos.len());
+    }
+
+    pub fn append_catalog_page(&mut self, page: CatalogPage) {
+        let added = page.videos.len();
+        self.videos.extend(page.videos);
+        self.next_page_token = page.next_page_token;
+        self.status = format!("Loaded {added} more videos ({} total)", self.videos.len());
     }
 
     pub fn start_playback(&mut self, video: Video) {
@@ -101,6 +123,7 @@ impl App {
                 self.status = format!("Playback mode: {}", self.playback.mode.label());
                 Action::None
             }
+            KeyCode::Char('n') if self.next_page_token.is_some() => Action::NextPage,
             KeyCode::Char(' ') => Action::TogglePause,
             KeyCode::Char('s') => Action::SaveToPlex,
             _ => Action::None,
@@ -176,5 +199,14 @@ mod tests {
         assert_eq!(app.playback.mode, PlaybackMode::Audio);
         app.handle_key(key(KeyCode::Char('m')));
         assert_eq!(app.playback.mode, PlaybackMode::Video);
+    }
+
+    #[test]
+    fn next_page_is_only_actionable_when_a_token_exists() {
+        let mut app = App::new(true);
+
+        assert_eq!(app.handle_key(key(KeyCode::Char('n'))), Action::None);
+        app.next_page_token = Some("next-token".to_owned());
+        assert_eq!(app.handle_key(key(KeyCode::Char('n'))), Action::NextPage);
     }
 }
