@@ -3,6 +3,8 @@
 A keyboard-driven terminal YouTube viewer built with Rust and
 [Ratatui](https://ratatui.rs/).
 
+![yourgroovetube screenshot](yougroovetube_screenshot.png)
+
 > [!IMPORTANT]
 > Search and metadata will use the official YouTube Data API wherever possible.
 > Playback and downloads use mpv with a `yt-dlp`-compatible extractor and are
