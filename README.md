@@ -3,7 +3,7 @@
 A keyboard-driven terminal YouTube viewer built with Rust and
 [Ratatui](https://ratatui.rs/).
 
-![yourgroovetube screenshot](yourgroovetube-social-preview.webp)
+![yourgroovetube screenshot](yourgroovetube-social-preview.png)
 
 > [!IMPORTANT]
 > Search and metadata will use the official YouTube Data API wherever possible.
