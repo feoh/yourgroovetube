@@ -53,6 +53,18 @@ The application already includes:
 - [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on `PATH`
 - a YouTube Data API v3 key for discovery
 
+## Install
+
+Install the latest source revision with Cargo:
+
+```console
+cargo install --git https://github.com/feoh/yourgroovetube
+```
+
+Tagged releases publish Linux x86-64, macOS Apple Silicon, and Windows x86-64
+archives on the [GitHub Releases](https://github.com/feoh/yourgroovetube/releases)
+page.
+
 ## Build and run
 
 ```console
