@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 
-use crate::models::Video;
+use crate::models::{PlaybackMode, Video};
 use crate::playback::PlaybackSnapshot;
 use crate::provider::CatalogPage;
 
@@ -11,6 +11,7 @@ pub enum Action {
     Search(String),
     NextPage,
     Play(Video),
+    SetMode(PlaybackMode),
     TogglePause,
     SaveToPlex,
 }
@@ -76,9 +77,9 @@ impl App {
     }
 
     pub fn start_playback(&mut self, video: Video) {
+        self.playback.duration_seconds = video.duration_seconds.unwrap_or_default() as f64;
         self.playback.current = Some(video);
         self.playback.position_seconds = 0.0;
-        self.playback.duration_seconds = 0.0;
         self.playback.paused = false;
     }
 
@@ -121,7 +122,7 @@ impl App {
             KeyCode::Char('m') => {
                 self.playback.mode = self.playback.mode.toggle();
                 self.status = format!("Playback mode: {}", self.playback.mode.label());
-                Action::None
+                Action::SetMode(self.playback.mode)
             }
             KeyCode::Char('n') if self.next_page_token.is_some() => Action::NextPage,
             KeyCode::Char(' ') => Action::TogglePause,
@@ -171,8 +172,6 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::PlaybackMode;
-
     use super::*;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -195,9 +194,15 @@ mod tests {
     fn playback_mode_toggles_between_video_and_audio() {
         let mut app = App::new(true);
 
-        app.handle_key(key(KeyCode::Char('m')));
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('m'))),
+            Action::SetMode(PlaybackMode::Audio)
+        );
         assert_eq!(app.playback.mode, PlaybackMode::Audio);
-        app.handle_key(key(KeyCode::Char('m')));
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('m'))),
+            Action::SetMode(PlaybackMode::Video)
+        );
         assert_eq!(app.playback.mode, PlaybackMode::Video);
     }
 

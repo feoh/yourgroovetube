@@ -126,9 +126,17 @@ fn render_player(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .current
         .as_ref()
         .map_or("Nothing playing", |video| video.title.as_str());
+    let state = if app.playback.current.is_none() {
+        "idle"
+    } else if app.playback.paused {
+        "paused"
+    } else if app.playback.eof_reached {
+        "finished"
+    } else {
+        "playing"
+    };
     let label = format!(
-        "{}  {} / {}",
-        current,
+        "[{state}] {current}  {} / {}",
         format_clock(app.playback.position_seconds),
         format_clock(app.playback.duration_seconds)
     );

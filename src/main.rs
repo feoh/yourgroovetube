@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use crossterm::event::{self, Event};
 use yourgroovetube::app::{Action, App};
 use yourgroovetube::config::{AppConfig, config_path};
+use yourgroovetube::playback::{MpvEngine, PlaybackEngine, PlaybackError};
 use yourgroovetube::provider::{SearchQuery, VideoCatalog};
 use yourgroovetube::ui;
 use yourgroovetube::youtube::YoutubeCatalog;
@@ -71,8 +72,9 @@ async fn run_app() -> Result<()> {
         }
     }
 
+    let mut player = MpvEngine::new();
     let mut terminal = ratatui::init();
-    let result = run_event_loop(&mut terminal, &mut app, catalog.as_ref()).await;
+    let result = run_event_loop(&mut terminal, &mut app, catalog.as_ref(), &mut player).await;
     ratatui::restore();
     result
 }
@@ -81,11 +83,14 @@ async fn run_event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
     catalog: Option<&YoutubeCatalog>,
+    player: &mut MpvEngine,
 ) -> Result<()> {
     terminal.draw(|frame| ui::draw(frame, app))?;
 
     while !app.should_quit {
         if !event::poll(Duration::from_millis(100))? {
+            sync_playback(app, player)?;
+            terminal.draw(|frame| ui::draw(frame, app))?;
             continue;
         }
         let Event::Key(key) = event::read()? else {
@@ -131,21 +136,55 @@ async fn run_event_loop(
                     Err(error) => app.status = format!("Could not load more videos: {error}"),
                 }
             }
-            Action::Play(video) => {
-                app.start_playback(video);
-                app.status = "Playback engine will be connected in the next milestone".to_owned();
+            Action::Play(video) => match player.play(&video, app.playback.mode) {
+                Ok(()) => {
+                    app.start_playback(video);
+                    app.status = "Playing through mpv".to_owned();
+                }
+                Err(error) => app.status = format!("Playback failed: {error}"),
+            },
+            Action::SetMode(mode) => match player.set_mode(mode) {
+                Ok(()) => app.status = format!("Playback mode: {}", mode.label()),
+                Err(error) => app.status = format!("Could not change playback mode: {error}"),
+            },
+            Action::TogglePause if app.playback.current.is_none() => {
+                app.status = "Nothing is playing".to_owned();
             }
             Action::TogglePause => {
-                app.status = "Pause command will be sent through mpv JSON IPC".to_owned();
+                let paused = !app.playback.paused;
+                match player.set_paused(paused) {
+                    Ok(()) => {
+                        app.playback.paused = paused;
+                        app.status = if paused {
+                            "Playback paused".to_owned()
+                        } else {
+                            "Playback resumed".to_owned()
+                        };
+                    }
+                    Err(error) => app.status = format!("Could not pause playback: {error}"),
+                }
             }
             Action::SaveToPlex => {
                 app.status = "Plex save workflow is not implemented yet".to_owned();
             }
         }
 
+        sync_playback(app, player)?;
         terminal.draw(|frame| ui::draw(frame, app))?;
     }
 
+    let _ = player.stop();
+    Ok(())
+}
+
+fn sync_playback(app: &mut App, player: &MpvEngine) -> Result<(), PlaybackError> {
+    let snapshot = player.snapshot()?;
+    if snapshot.last_error != app.playback.last_error
+        && let Some(error) = snapshot.last_error.as_ref()
+    {
+        app.status = format!("mpv: {error}");
+    }
+    app.playback = snapshot;
     Ok(())
 }
 

@@ -38,15 +38,15 @@ clearly labeled as such.
 
 ## Playback
 
-The playback task will start one `mpv --idle=yes` process with an IPC socket in
-a private runtime directory. One reader task will parse newline-delimited JSON,
-route replies by `request_id`, and publish observed `time-pos`, `duration`,
-`pause`, `eof-reached`, and `idle-active` properties. UI progress updates will
-be coalesced to avoid redraw storms.
+The playback engine starts one `mpv --idle=yes` process with an IPC socket in a
+random, private temporary directory. A dedicated reader thread parses
+newline-delimited JSON, records command failures, and publishes observed
+`time-pos`, `duration`, `pause`, `eof-reached`, and `idle-active` properties.
+The UI refreshes the shared snapshot at ten frames per second.
 
-Video mode allows mpv to render normally. Audio mode sets `vid=no` and keeps the
-selected thumbnail in the TUI. Mode is a playback concern rather than a search
-or catalog concern.
+Video mode allows mpv to render normally. Audio mode sets `vid=no`; the terminal
+thumbnail renderer remains a separate milestone. Mode is a playback concern
+rather than a search or catalog concern.
 
 ## Plex import
 

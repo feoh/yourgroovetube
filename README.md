@@ -23,17 +23,20 @@ A keyboard-driven terminal YouTube viewer built with Rust and
 
 ## Current status
 
-The repository contains a runnable application shell with live, official
-YouTube Data API discovery. Persistent mpv IPC, terminal images, and Plex import
-remain tracked Witan milestones.
+The repository contains a runnable application with live, official YouTube Data
+API discovery and persistent mpv playback. Terminal thumbnail rendering,
+playlist queues, and Plex import remain tracked Witan milestones.
 
 The application already includes:
 
 - a regional `mostPopular` default feed;
 - explicit title/tag search with batched metadata hydration;
 - five-minute in-memory result caching and explicit pagination;
+- persistent mpv playback controlled through newline-delimited JSON IPC;
+- yt-dlp-backed YouTube URL resolution, pause/resume, and video/audio switching;
+- observed playback position, duration, end state, and IPC errors;
 - keyboard/search state and a responsive Ratatui layout;
-- the video/audio-mode domain model and now-playing progress gauge;
+- a live now-playing progress gauge;
 - platform-standard configuration loading;
 - `doctor` and `config path` commands; and
 - tests plus GitHub Actions validation.
