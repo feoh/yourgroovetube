@@ -4,6 +4,8 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 0.1.0 - 2026-08-10
+
 - Official YouTube Data API search, metadata hydration, pagination, caching, and
   regional popular-video feed.
 - Persistent mpv JSON IPC playback with yt-dlp resolution, pause/resume,
