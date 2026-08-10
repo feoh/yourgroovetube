@@ -1,0 +1,222 @@
+use ratatui::Frame;
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap};
+
+use crate::app::App;
+
+pub fn draw(frame: &mut Frame<'_>, app: &App) {
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(5),
+            Constraint::Length(1),
+        ])
+        .split(frame.area());
+
+    render_header(frame, sections[0], app);
+    render_browser(frame, sections[1], app);
+    render_player(frame, sections[2], app);
+    frame.render_widget(
+        Paragraph::new(app.status.as_str()).style(Style::default().fg(Color::DarkGray)),
+        sections[3],
+    );
+
+    if app.search_active {
+        render_search(frame, centered_rect(70, 5, frame.area()), app);
+    }
+    if app.help_visible {
+        render_help(frame, centered_rect(60, 15, frame.area()));
+    }
+}
+
+fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let title = Line::from(vec![
+        Span::styled(
+            " yourgroovetube ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  / search  Enter play  m mode  Space pause  s save  ? help  q quit"),
+    ]);
+    let mode = format!("mode: {} ", app.playback.mode.label());
+    frame.render_widget(
+        Paragraph::new(title)
+            .block(Block::default().borders(Borders::BOTTOM))
+            .alignment(Alignment::Left),
+        area,
+    );
+    let mode_area = Rect {
+        x: area.right().saturating_sub(mode.len() as u16),
+        y: area.y,
+        width: mode.len() as u16,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(mode).style(Style::default().fg(Color::Yellow)),
+        mode_area,
+    );
+}
+
+fn render_browser(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(area);
+
+    let items = if app.videos.is_empty() {
+        vec![ListItem::new("No videos loaded. Press / to search.")]
+    } else {
+        app.videos
+            .iter()
+            .map(|video| {
+                ListItem::new(Line::from(vec![
+                    Span::styled(&video.title, Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(format!("  — {}", video.channel_title)),
+                ]))
+            })
+            .collect()
+    };
+    let list = List::new(items)
+        .block(Block::default().title(" Videos ").borders(Borders::ALL))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+    let mut state = ListState::default();
+    if !app.videos.is_empty() {
+        state.select(Some(app.selected));
+    }
+    frame.render_stateful_widget(list, columns[0], &mut state);
+
+    let details = app.selected_video().map_or_else(
+        || "Select a search result to view its metadata.".to_owned(),
+        |video| {
+            format!(
+                "{}\n\nChannel: {}\nDuration: {}\n\n{}",
+                video.title,
+                video.channel_title,
+                format_duration(video.duration_seconds),
+                video.description
+            )
+        },
+    );
+    frame.render_widget(
+        Paragraph::new(details).wrap(Wrap { trim: true }).block(
+            Block::default()
+                .title(" Details / thumbnail ")
+                .borders(Borders::ALL),
+        ),
+        columns[1],
+    );
+}
+
+fn render_player(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let current = app
+        .playback
+        .current
+        .as_ref()
+        .map_or("Nothing playing", |video| video.title.as_str());
+    let label = format!(
+        "{}  {} / {}",
+        current,
+        format_clock(app.playback.position_seconds),
+        format_clock(app.playback.duration_seconds)
+    );
+    let gauge = Gauge::default()
+        .block(
+            Block::default()
+                .title(" Now playing ")
+                .borders(Borders::ALL),
+        )
+        .gauge_style(Style::default().fg(Color::Cyan))
+        .ratio(app.playback.progress_ratio())
+        .label(label);
+    frame.render_widget(gauge, area);
+}
+
+fn render_search(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(app.search_query.as_str()).block(
+            Block::default()
+                .title(" Search title or tags ")
+                .borders(Borders::ALL),
+        ),
+        area,
+    );
+    let cursor_offset = app.search_query.chars().count() as u16;
+    frame.set_cursor_position((area.x + cursor_offset + 1, area.y + 1));
+}
+
+fn render_help(frame: &mut Frame<'_>, area: Rect) {
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(
+            "/       Search by title or tags\n\
+             j/k     Move through videos\n\
+             Enter   Play selected video\n\
+             m       Toggle video / audio + thumbnail\n\
+             Space   Pause or resume\n\
+             s       Save current video to Plex directory\n\
+             q       Quit\n\n\
+             Press any key to close help.",
+        )
+        .block(Block::default().title(" Keys ").borders(Borders::ALL)),
+        area,
+    );
+}
+
+fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
+    let width = area.width.saturating_mul(percent_x) / 100;
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height: height.min(area.height),
+    }
+}
+
+fn format_duration(seconds: Option<u64>) -> String {
+    seconds.map_or_else(|| "unknown".to_owned(), |value| format_clock(value as f64))
+}
+
+fn format_clock(seconds: f64) -> String {
+    let total = seconds.max(0.0).round() as u64;
+    format!("{}:{:02}", total / 60, total % 60)
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+
+    #[test]
+    fn shell_renders_requested_controls() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(never) => match never {},
+        };
+        let app = App::new(false);
+
+        if terminal.draw(|frame| draw(frame, &app)).is_err() {
+            panic!("frame should render");
+        }
+        let rendered = terminal.backend().to_string();
+
+        assert!(rendered.contains("yourgroovetube"));
+        assert!(rendered.contains("audio + thumbnail") || rendered.contains("mode: video"));
+        assert!(rendered.contains("Configure a YouTube Data API key"));
+    }
+}

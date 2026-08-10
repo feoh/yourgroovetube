@@ -1,0 +1,23 @@
+[package]
+name = "yourgroovetube"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A keyboard-driven terminal YouTube viewer"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/feoh/yourgroovetube"
+homepage = "https://github.com/feoh/yourgroovetube"
+keywords = ["mpv", "ratatui", "tui", "youtube"]
+categories = ["command-line-utilities", "multimedia::video"]
+
+[dependencies]
+anyhow = "1.0.103"
+clap = { version = "4.6.2", features = ["derive"] }
+crossterm = "0.29.0"
+directories = "6.0.0"
+ratatui = "0.30.0"
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.18"
+tokio = { version = "1.52.0", features = ["macros", "rt-multi-thread", "time"] }
+toml = "1.1.0"
