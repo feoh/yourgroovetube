@@ -10,6 +10,7 @@ use crate::provider::{CatalogError, CatalogFuture, CatalogPage, SearchQuery, Vid
 
 const API_BASE_URL: &str = "https://www.googleapis.com/youtube/v3/";
 const CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct YoutubeCatalog {
     client: Client,
@@ -66,6 +67,7 @@ impl YoutubeCatalog {
 
         let client = Client::builder()
             .user_agent(concat!("yourgroovetube/", env!("CARGO_PKG_VERSION")))
+            .timeout(API_REQUEST_TIMEOUT)
             .build()
             .map_err(|error| CatalogError::Request(error.without_url().to_string()))?;
         Ok(Self {

@@ -80,6 +80,13 @@ unwanted:
 cargo run -- --no-images
 ```
 
+A [YouTube Data API v3 key](https://console.cloud.google.com/marketplace/product/google/youtube.googleapis.com)
+is required. On the first interactive launch, `yourgroovetube` displays this
+direct setup URL, prompts for the key with input hidden, validates it by
+connecting to YouTube, and saves it to the platform configuration file. Leaving the prompt
+blank or running without an interactive terminal and without a configured key
+aborts startup instead of opening a non-functional interface.
+
 Inspect prerequisites and the configuration path:
 
 ```console
@@ -87,14 +94,15 @@ cargo run -- doctor
 cargo run -- config path
 ```
 
-Set the API key without writing it to disk:
+To provide the key without writing it to disk, set the environment variable
+before launching:
 
 ```console
 export YOURGROOVETUBE_YOUTUBE_API_KEY='your-key'
 cargo run
 ```
 
-Alternatively, create the file printed by `yourgroovetube config path`:
+Alternatively, create or edit the file printed by `yourgroovetube config path`:
 
 ```toml
 [youtube]
@@ -112,7 +120,7 @@ Do not commit API keys, tokens, cookies, or captured YouTube responses.
 
 | Key | Action |
 | --- | --- |
-| `/` | Search by title or tags |
+| `/` | Open title/tag search (`Enter` submits, `Esc` cancels) |
 | `j`/`k` or arrows | Select a video |
 | `n` | Load the next result or playlist page |
 | `P` | Open a public/unlisted playlist URL or ID |

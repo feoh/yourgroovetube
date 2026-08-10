@@ -2,16 +2,16 @@ use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use crossterm::event::{self, Event};
+use crossterm::event;
 use yourgroovetube::app::{Action, App};
 use yourgroovetube::artwork::ArtworkState;
 use yourgroovetube::config::{AppConfig, config_path};
 use yourgroovetube::download::{SaveError, VideoSaver, YoutubeSaver};
 use yourgroovetube::models::PlaybackMode;
 use yourgroovetube::playback::{MpvEngine, PlaybackEngine, PlaybackError};
-use yourgroovetube::provider::{SearchQuery, VideoCatalog};
+use yourgroovetube::provider::{CatalogPage, SearchQuery, VideoCatalog};
 use yourgroovetube::ui;
 use yourgroovetube::youtube::{YoutubeCatalog, parse_playlist_id};
 
@@ -59,27 +59,78 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run_app(no_images: bool) -> Result<()> {
-    let config = AppConfig::load().context("could not load yourgroovetube configuration")?;
-    let catalog = config
-        .youtube_api_key()
-        .map(|api_key| {
-            YoutubeCatalog::new(
-                api_key,
-                config.youtube.region_code.clone(),
-                config.youtube.results_per_page,
-            )
-        })
-        .transpose()
-        .context("could not configure the YouTube catalog")?;
-    let mut app = App::new(catalog.is_some());
-    if let Some(catalog) = catalog.as_ref() {
-        app.status = "Loading popular videos…".to_owned();
-        match catalog.default_feed(None).await {
-            Ok(page) => app.replace_catalog_page(page, None),
-            Err(error) => app.status = format!("Could not load popular videos: {error}"),
-        }
+fn acquire_youtube_api_key(config: &mut AppConfig) -> Result<(String, bool)> {
+    let existing_api_key = config.youtube_api_key();
+    acquire_youtube_api_key_with(config, existing_api_key, || {
+        rpassword::prompt_password("YouTube API key (input hidden; blank cancels): ")
+            .context("could not read the YouTube API key from the terminal")
+    })
+}
+
+fn acquire_youtube_api_key_with<F>(
+    config: &mut AppConfig,
+    existing_api_key: Option<String>,
+    prompt: F,
+) -> Result<(String, bool)>
+where
+    F: FnOnce() -> Result<String>,
+{
+    if let Some(api_key) = existing_api_key {
+        return Ok((api_key, false));
     }
+
+    let path = config_path().context("could not determine where to save configuration")?;
+    eprintln!("yourgroovetube requires a YouTube Data API v3 key.");
+    eprintln!(
+        "Enable or create one at:\n  https://console.cloud.google.com/marketplace/product/google/youtube.googleapis.com"
+    );
+    eprintln!(
+        "No key was found in YOURGROOVETUBE_YOUTUBE_API_KEY or {}.",
+        path.display()
+    );
+    eprintln!("The key will be saved after the application validates it.");
+    let api_key = prompt()?.trim().to_owned();
+    if api_key.is_empty() {
+        bail!("a YouTube API key is required; application startup cancelled");
+    }
+    config.youtube.api_key = Some(api_key.clone());
+    Ok((api_key, true))
+}
+
+async fn validate_youtube_catalog<C, F>(catalog: &C, after_validation: F) -> Result<CatalogPage>
+where
+    C: VideoCatalog,
+    F: FnOnce() -> Result<()>,
+{
+    let page = catalog
+        .default_feed(None)
+        .await
+        .context("could not connect to the YouTube Data API; check the API key and network")?;
+    after_validation()?;
+    Ok(page)
+}
+
+async fn run_app(no_images: bool) -> Result<()> {
+    let mut config = AppConfig::load().context("could not load yourgroovetube configuration")?;
+    let (api_key, prompted) = acquire_youtube_api_key(&mut config)?;
+    let catalog = YoutubeCatalog::new(
+        api_key,
+        config.youtube.region_code.clone(),
+        config.youtube.results_per_page,
+    )
+    .context("could not configure the YouTube catalog")?;
+    let page = validate_youtube_catalog(&catalog, || {
+        if prompted {
+            let path = config
+                .save()
+                .context("the API key was valid but could not be saved")?;
+            eprintln!("Saved YouTube API configuration to {}.", path.display());
+        }
+        Ok(())
+    })
+    .await?;
+    let mut app = App::new();
+    app.replace_catalog_page(page, None);
 
     let mut artwork = if no_images {
         ArtworkState::halfblocks()
@@ -87,18 +138,22 @@ async fn run_app(no_images: bool) -> Result<()> {
         ArtworkState::detect()
     }
     .context("could not initialize terminal thumbnails")?;
-    update_artwork(&mut app, &mut artwork).await;
     let saver = YoutubeSaver::new(config.plex.library_dir.clone());
     let mut player = MpvEngine::new();
     let mut terminal = ratatui::init();
-    let result = run_event_loop(
-        &mut terminal,
-        &mut app,
-        catalog.as_ref(),
-        &mut player,
-        &mut artwork,
-        &saver,
-    )
+    let result = async {
+        draw_ui(&mut terminal, &app, &mut artwork)?;
+        update_artwork(&mut app, &mut artwork).await;
+        run_event_loop(
+            &mut terminal,
+            &mut app,
+            &catalog,
+            &mut player,
+            &mut artwork,
+            &saver,
+        )
+        .await
+    }
     .await;
     ratatui::restore();
     result
@@ -107,7 +162,7 @@ async fn run_app(no_images: bool) -> Result<()> {
 async fn run_event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
-    catalog: Option<&YoutubeCatalog>,
+    catalog: &YoutubeCatalog,
     player: &mut MpvEngine,
     artwork: &mut ArtworkState,
     saver: &YoutubeSaver,
@@ -117,25 +172,26 @@ async fn run_event_loop(
 
     while !app.should_quit {
         if !event::poll(Duration::from_millis(100))? {
+            let previous_artwork_url = desired_artwork_url(app);
             sync_playback(app, player)?;
             advance_finished_queue(app, player);
+            if desired_artwork_url(app) != previous_artwork_url {
+                update_artwork(app, artwork).await;
+            }
             poll_save_job(app, &mut save_job).await;
             draw_ui(terminal, app, artwork)?;
             continue;
         }
-        let Event::Key(key) = event::read()? else {
+        let previous_artwork_url = desired_artwork_url(app);
+        let Some(action) = ui::dispatch_input_event(terminal, app, event::read()?, Some(artwork))?
+        else {
             continue;
         };
 
-        match app.handle_key(key) {
+        match action {
             Action::None => {}
             Action::Quit => app.should_quit = true,
             Action::Search(query) => {
-                let Some(catalog) = catalog else {
-                    app.status = "Configure a YouTube Data API key before searching".to_owned();
-                    draw_ui(terminal, app, artwork)?;
-                    continue;
-                };
                 app.status = format!("Searching for {query}…");
                 draw_ui(terminal, app, artwork)?;
                 match catalog.search(SearchQuery::new(query.clone())).await {
@@ -143,31 +199,18 @@ async fn run_event_loop(
                     Err(error) => app.status = format!("Search failed: {error}"),
                 }
             }
-            Action::LoadPlaylist(value) => {
-                let Some(catalog) = catalog else {
-                    app.status =
-                        "Configure a YouTube Data API key before opening playlists".to_owned();
+            Action::LoadPlaylist(value) => match parse_playlist_id(&value) {
+                Ok(playlist_id) => {
+                    app.status = "Loading playlist…".to_owned();
                     draw_ui(terminal, app, artwork)?;
-                    continue;
-                };
-                match parse_playlist_id(&value) {
-                    Ok(playlist_id) => {
-                        app.status = "Loading playlist…".to_owned();
-                        draw_ui(terminal, app, artwork)?;
-                        match catalog.playlist(&playlist_id, None).await {
-                            Ok(page) => app.replace_playlist_page(page, playlist_id),
-                            Err(error) => app.status = format!("Could not load playlist: {error}"),
-                        }
+                    match catalog.playlist(&playlist_id, None).await {
+                        Ok(page) => app.replace_playlist_page(page, playlist_id),
+                        Err(error) => app.status = format!("Could not load playlist: {error}"),
                     }
-                    Err(error) => app.status = error.to_string(),
                 }
-            }
+                Err(error) => app.status = error.to_string(),
+            },
             Action::NextPage => {
-                let Some(catalog) = catalog else {
-                    app.status = "Configure a YouTube Data API key before loading more".to_owned();
-                    draw_ui(terminal, app, artwork)?;
-                    continue;
-                };
                 let Some(page_token) = app.next_page_token.clone() else {
                     continue;
                 };
@@ -226,8 +269,10 @@ async fn run_event_loop(
             },
         }
 
-        update_artwork(app, artwork).await;
         sync_playback(app, player)?;
+        if desired_artwork_url(app) != previous_artwork_url {
+            update_artwork(app, artwork).await;
+        }
         poll_save_job(app, &mut save_job).await;
         draw_ui(terminal, app, artwork)?;
     }
@@ -300,8 +345,8 @@ fn draw_ui(
     Ok(())
 }
 
-async fn update_artwork(app: &mut App, artwork: &mut ArtworkState) {
-    let thumbnail = if app.playback.mode == PlaybackMode::Audio {
+fn desired_artwork_url(app: &App) -> Option<String> {
+    if app.playback.mode == PlaybackMode::Audio {
         app.playback
             .current
             .as_ref()
@@ -309,9 +354,11 @@ async fn update_artwork(app: &mut App, artwork: &mut ArtworkState) {
     } else {
         app.selected_video()
     }
-    .and_then(|video| video.thumbnail_url.clone());
+    .and_then(|video| video.thumbnail_url.clone())
+}
 
-    match thumbnail {
+async fn update_artwork(app: &mut App, artwork: &mut ArtworkState) {
+    match desired_artwork_url(app) {
         Some(url) => {
             if let Err(error) = artwork.load_url(&url).await {
                 artwork.show_placeholder();
@@ -349,9 +396,13 @@ fn run_doctor() -> Result<()> {
     }
     match config.youtube_api_key() {
         Some(_) => println!("  ok   YouTube Data API key configured"),
-        None => println!(
-            "  miss YouTube Data API key: set YOURGROOVETUBE_YOUTUBE_API_KEY or config.toml"
-        ),
+        None => {
+            println!("  miss YouTube Data API key: run the app interactively to configure it");
+            println!(
+                "  info Or set YOURGROOVETUBE_YOUTUBE_API_KEY or edit {}",
+                config_path()?.display()
+            );
+        }
     }
     println!(
         "  info YouTube region/page size: {}/{}",
@@ -377,4 +428,114 @@ fn dependency_version(program: &str) -> Option<String> {
         .lines()
         .next()
         .map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use yourgroovetube::provider::{CatalogError, CatalogFuture};
+
+    use super::*;
+
+    struct FakeCatalog {
+        fail_default_feed: bool,
+    }
+
+    impl VideoCatalog for FakeCatalog {
+        fn default_feed(&self, _page_token: Option<String>) -> CatalogFuture<'_> {
+            Box::pin(async move {
+                if self.fail_default_feed {
+                    Err(CatalogError::Request("validation failed".to_owned()))
+                } else {
+                    Ok(CatalogPage::default())
+                }
+            })
+        }
+
+        fn search(&self, _query: SearchQuery) -> CatalogFuture<'_> {
+            Box::pin(async { Ok(CatalogPage::default()) })
+        }
+
+        fn playlist<'a>(
+            &'a self,
+            _playlist_id: &'a str,
+            _page_token: Option<String>,
+        ) -> CatalogFuture<'a> {
+            Box::pin(async { Ok(CatalogPage::default()) })
+        }
+    }
+
+    #[test]
+    fn configured_api_key_skips_the_prompt() {
+        let mut config = AppConfig::default();
+        let result = acquire_youtube_api_key_with(
+            &mut config,
+            Some("configured-key".to_owned()),
+            || -> Result<String> { panic!("configured key must not prompt") },
+        );
+        let Ok((api_key, prompted)) = result else {
+            panic!("configured key should be accepted");
+        };
+
+        assert_eq!(api_key, "configured-key");
+        assert!(!prompted);
+    }
+
+    #[test]
+    fn prompted_api_key_is_trimmed_and_staged_for_saving() {
+        let mut config = AppConfig::default();
+        let result =
+            acquire_youtube_api_key_with(&mut config, None, || Ok("  prompted-key  ".to_owned()));
+        let Ok((api_key, prompted)) = result else {
+            panic!("prompted key should be accepted");
+        };
+
+        assert_eq!(api_key, "prompted-key");
+        assert!(prompted);
+        assert_eq!(config.youtube.api_key.as_deref(), Some("prompted-key"));
+    }
+
+    #[test]
+    fn blank_prompt_cancels_startup() {
+        let mut config = AppConfig::default();
+        let result = acquire_youtube_api_key_with(&mut config, None, || Ok("   ".to_owned()));
+
+        assert!(result.is_err());
+        assert!(config.youtube.api_key.is_none());
+    }
+
+    #[tokio::test]
+    async fn failed_catalog_validation_does_not_save_configuration() {
+        let catalog = FakeCatalog {
+            fail_default_feed: true,
+        };
+        let saved = Cell::new(false);
+
+        let result = validate_youtube_catalog(&catalog, || {
+            saved.set(true);
+            Ok(())
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert!(!saved.get());
+    }
+
+    #[tokio::test]
+    async fn successful_catalog_validation_saves_before_startup_continues() {
+        let catalog = FakeCatalog {
+            fail_default_feed: false,
+        };
+        let saved = Cell::new(false);
+
+        let result = validate_youtube_catalog(&catalog, || {
+            saved.set(true);
+            Ok(())
+        })
+        .await;
+
+        assert!(result.is_ok());
+        assert!(saved.get());
+    }
 }

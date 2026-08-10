@@ -1,12 +1,32 @@
-use ratatui::Frame;
+use crossterm::event::Event;
+use ratatui::backend::Backend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::{Frame, Terminal};
 
-use crate::app::App;
+use crate::app::{Action, App};
 use crate::artwork::ArtworkState;
 use crate::models::PlaybackMode;
+
+/// Apply one Crossterm key event and render the resulting application frame.
+///
+/// Keeping input dispatch and drawing in one boundary lets `TestBackend` tests
+/// exercise the same immediate-feedback path as the production event loop.
+pub fn dispatch_input_event<B: Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    event: Event,
+    artwork: Option<&mut ArtworkState>,
+) -> Result<Option<Action>, B::Error> {
+    let Event::Key(key) = event else {
+        return Ok(None);
+    };
+    let action = app.handle_key(key);
+    terminal.draw(|frame| draw(frame, app, artwork))?;
+    Ok(Some(action))
+}
 
 pub fn draw(frame: &mut Frame<'_>, app: &App, artwork: Option<&mut ArtworkState>) {
     let sections = Layout::default()
@@ -31,7 +51,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, artwork: Option<&mut ArtworkState>
         render_input(
             frame,
             centered_rect(70, 5, frame.area()),
-            " Search title or tags ",
+            " Search title or tags · Enter to submit · Esc to cancel ",
             &app.search_query,
         );
     }
@@ -217,9 +237,10 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(
-            "/       Search by title or tags\n\
+            "/       Open title or tag search\n\
+             Enter   Submit search / play selected video\n\
+             Esc     Cancel text input\n\
              j/k     Move through videos\n\
-             Enter   Play selected video\n\
              n       Load the next result page\n\
              P       Open a YouTube playlist URL or ID\n\
              [ / ]   Previous / next playlist video\n\
@@ -255,10 +276,36 @@ fn format_clock(seconds: f64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     use super::*;
+
+    fn draw_test_app(terminal: &mut Terminal<TestBackend>, app: &App) {
+        if terminal.draw(|frame| draw(frame, app, None)).is_err() {
+            panic!("frame should render");
+        }
+    }
+
+    fn dispatch_test_event(
+        terminal: &mut Terminal<TestBackend>,
+        app: &mut App,
+        key: KeyEvent,
+    ) -> Action {
+        match dispatch_input_event(terminal, app, Event::Key(key), None) {
+            Ok(Some(action)) => action,
+            Ok(None) => panic!("key event should be handled"),
+            Err(never) => match never {},
+        }
+    }
+
+    fn key_with_kind(code: KeyCode, kind: KeyEventKind) -> KeyEvent {
+        KeyEvent {
+            kind,
+            ..KeyEvent::from(code)
+        }
+    }
 
     #[test]
     fn shell_renders_requested_controls() {
@@ -267,7 +314,7 @@ mod tests {
             Ok(terminal) => terminal,
             Err(never) => match never {},
         };
-        let app = App::new(false);
+        let app = App::new();
 
         if terminal.draw(|frame| draw(frame, &app, None)).is_err() {
             panic!("frame should render");
@@ -276,7 +323,50 @@ mod tests {
 
         assert!(rendered.contains("yourgroovetube"));
         assert!(rendered.contains("audio + thumbnail") || rendered.contains("mode: video"));
-        assert!(rendered.contains("Configure a YouTube Data API key"));
+        assert!(rendered.contains("Press / to search YouTube"));
+    }
+
+    #[test]
+    fn search_key_events_update_test_backend_frames_and_submit() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(never) => match never {},
+        };
+        let mut app = App::new();
+        draw_test_app(&mut terminal, &app);
+        assert!(!terminal.backend().to_string().contains("Enter to submit"));
+
+        let action = dispatch_test_event(
+            &mut terminal,
+            &mut app,
+            key_with_kind(KeyCode::Char('/'), KeyEventKind::Repeat),
+        );
+        assert_eq!(action, Action::None);
+        let rendered = terminal.backend().to_string();
+        assert!(rendered.contains("Enter to submit"));
+        assert!(rendered.contains("Esc to cancel"));
+
+        let mut expected_query = String::new();
+        for character in "synthwave".chars() {
+            expected_query.push(character);
+            assert_eq!(
+                dispatch_test_event(
+                    &mut terminal,
+                    &mut app,
+                    KeyEvent::from(KeyCode::Char(character)),
+                ),
+                Action::None
+            );
+            assert!(terminal.backend().to_string().contains(&expected_query));
+        }
+        terminal.backend_mut().assert_cursor_position((25, 10));
+
+        let action = dispatch_test_event(&mut terminal, &mut app, KeyEvent::from(KeyCode::Enter));
+
+        assert_eq!(action, Action::Search("synthwave".to_owned()));
+        assert!(!app.search_active);
+        assert!(!terminal.backend().to_string().contains("Enter to submit"));
     }
 
     #[test]
@@ -286,7 +376,7 @@ mod tests {
             Ok(terminal) => terminal,
             Err(never) => match never {},
         };
-        let app = App::new(false);
+        let app = App::new();
         let Ok(mut artwork) = ArtworkState::halfblocks() else {
             panic!("half-block artwork should initialize");
         };
@@ -310,7 +400,7 @@ mod tests {
             Ok(terminal) => terminal,
             Err(never) => match never {},
         };
-        let app = App::new(false);
+        let app = App::new();
 
         if terminal.draw(|frame| draw(frame, &app, None)).is_err() {
             panic!("narrow frame should render");

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use image::{DynamicImage, ImageBuffer, Rgba};
 use ratatui::{Frame, layout::Rect};
 use ratatui_image::{Resize, StatefulImage, picker::Picker, protocol::StatefulProtocol};
@@ -5,6 +7,7 @@ use reqwest::{Client, StatusCode, Url, redirect::Policy};
 use thiserror::Error;
 
 const MAX_THUMBNAIL_BYTES: u64 = 10 * 1024 * 1024;
+const THUMBNAIL_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct ArtworkState {
     client: Client,
@@ -43,6 +46,7 @@ impl ArtworkState {
         let client = Client::builder()
             .user_agent(concat!("yourgroovetube/", env!("CARGO_PKG_VERSION")))
             .redirect(Policy::limited(3))
+            .timeout(THUMBNAIL_REQUEST_TIMEOUT)
             .build()
             .map_err(|error| ArtworkError::Client(error.without_url().to_string()))?;
         let mut artwork = Self {

@@ -39,13 +39,14 @@ pub struct App {
     pub playback: PlaybackSnapshot,
 }
 
+impl Default for App {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl App {
-    pub fn new(api_configured: bool) -> Self {
-        let status = if api_configured {
-            "Press / to search YouTube".to_owned()
-        } else {
-            "Configure a YouTube Data API key, then press / to search".to_owned()
-        };
+    pub fn new() -> Self {
         Self {
             videos: Vec::new(),
             selected: 0,
@@ -55,7 +56,7 @@ impl App {
             playlist_query: String::new(),
             help_visible: false,
             should_quit: false,
-            status,
+            status: "Press / to search YouTube".to_owned(),
             feed_label: "Popular videos".to_owned(),
             active_search: None,
             active_playlist: None,
@@ -141,7 +142,9 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Action {
-        if key.kind != KeyEventKind::Press {
+        // Enhanced keyboard protocols report held keys as Repeat events. They are
+        // actionable input too; only Release would otherwise duplicate a key.
+        if key.kind == KeyEventKind::Release {
             return Action::None;
         }
         if self.search_active {
@@ -272,12 +275,21 @@ mod tests {
         KeyEvent::from(code)
     }
 
+    fn key_with_kind(code: KeyCode, kind: KeyEventKind) -> KeyEvent {
+        KeyEvent {
+            kind,
+            ..KeyEvent::from(code)
+        }
+    }
+
     #[test]
     fn search_captures_text_before_global_shortcuts() {
-        let mut app = App::new(true);
+        let mut app = App::new();
 
         app.handle_key(key(KeyCode::Char('/')));
+        assert!(app.search_active);
         app.handle_key(key(KeyCode::Char('q')));
+        assert_eq!(app.search_query, "q");
         let action = app.handle_key(key(KeyCode::Enter));
 
         assert_eq!(action, Action::Search("q".to_owned()));
@@ -285,8 +297,23 @@ mod tests {
     }
 
     #[test]
+    fn repeat_keys_are_input_and_release_keys_are_ignored() {
+        let mut app = App::new();
+
+        assert_eq!(
+            app.handle_key(key_with_kind(KeyCode::Char('/'), KeyEventKind::Repeat)),
+            Action::None
+        );
+        assert!(app.search_active);
+        app.handle_key(key_with_kind(KeyCode::Char('a'), KeyEventKind::Repeat));
+        app.handle_key(key_with_kind(KeyCode::Char('b'), KeyEventKind::Release));
+
+        assert_eq!(app.search_query, "a");
+    }
+
+    #[test]
     fn playlist_input_captures_urls_before_global_shortcuts() {
-        let mut app = App::new(true);
+        let mut app = App::new();
 
         app.handle_key(key(KeyCode::Char('P')));
         for character in "PL1234567890".chars() {
@@ -300,7 +327,7 @@ mod tests {
 
     #[test]
     fn playlist_queue_moves_in_order() {
-        let mut app = App::new(true);
+        let mut app = App::new();
         app.active_playlist = Some("PL1234567890".to_owned());
         app.videos = ["first", "second", "third"]
             .into_iter()
@@ -329,7 +356,7 @@ mod tests {
 
     #[test]
     fn playback_mode_toggles_between_video_and_audio() {
-        let mut app = App::new(true);
+        let mut app = App::new();
 
         assert_eq!(
             app.handle_key(key(KeyCode::Char('m'))),
@@ -345,7 +372,7 @@ mod tests {
 
     #[test]
     fn next_page_is_only_actionable_when_a_token_exists() {
-        let mut app = App::new(true);
+        let mut app = App::new();
 
         assert_eq!(app.handle_key(key(KeyCode::Char('n'))), Action::None);
         app.next_page_token = Some("next-token".to_owned());

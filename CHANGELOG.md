@@ -4,6 +4,14 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 0.1.1 - 2026-08-10
+
+- Require a validated YouTube Data API key before starting the TUI, securely
+  prompt for a missing key, and save first-run configuration with restrictive
+  permissions where supported.
+- Accept enhanced-terminal repeat key events and cover search input with
+  Ratatui `TestBackend` frame-by-frame tests.
+
 ## 0.1.0 - 2026-08-10
 
 - Official YouTube Data API search, metadata hydration, pagination, caching, and
