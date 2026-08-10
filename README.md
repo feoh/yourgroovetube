@@ -24,8 +24,8 @@ A keyboard-driven terminal YouTube viewer built with Rust and
 ## Current status
 
 The repository contains a runnable application with live, official YouTube Data
-API discovery, persistent mpv playback, terminal thumbnails, and YouTube
-playlist queues. Plex import remains the final tracked MVP feature.
+API discovery, persistent mpv playback, terminal thumbnails, YouTube playlist
+queues, and explicit Plex-library saving. Packaging and release polish remain.
 
 The application already includes:
 
@@ -39,6 +39,7 @@ The application already includes:
 - audio mode that keeps the current video's thumbnail visible while `vid=no`;
 - public/unlisted playlist loading with pagination, automatic queue advancement,
   and manual previous/next controls;
+- asynchronous, explicit yt-dlp saving into the configured Plex library;
 - keyboard/search state and a responsive Ratatui layout;
 - a live now-playing progress gauge;
 - platform-standard configuration loading;

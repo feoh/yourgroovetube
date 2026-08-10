@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
@@ -7,11 +8,14 @@ use crossterm::event::{self, Event};
 use yourgroovetube::app::{Action, App};
 use yourgroovetube::artwork::ArtworkState;
 use yourgroovetube::config::{AppConfig, config_path};
+use yourgroovetube::download::{SaveError, VideoSaver, YoutubeSaver};
 use yourgroovetube::models::PlaybackMode;
 use yourgroovetube::playback::{MpvEngine, PlaybackEngine, PlaybackError};
 use yourgroovetube::provider::{SearchQuery, VideoCatalog};
 use yourgroovetube::ui;
 use yourgroovetube::youtube::{YoutubeCatalog, parse_playlist_id};
+
+type SaveJob = tokio::task::JoinHandle<Result<PathBuf, SaveError>>;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -84,6 +88,7 @@ async fn run_app(no_images: bool) -> Result<()> {
     }
     .context("could not initialize terminal thumbnails")?;
     update_artwork(&mut app, &mut artwork).await;
+    let saver = YoutubeSaver::new(config.plex.library_dir.clone());
     let mut player = MpvEngine::new();
     let mut terminal = ratatui::init();
     let result = run_event_loop(
@@ -92,6 +97,7 @@ async fn run_app(no_images: bool) -> Result<()> {
         catalog.as_ref(),
         &mut player,
         &mut artwork,
+        &saver,
     )
     .await;
     ratatui::restore();
@@ -104,13 +110,16 @@ async fn run_event_loop(
     catalog: Option<&YoutubeCatalog>,
     player: &mut MpvEngine,
     artwork: &mut ArtworkState,
+    saver: &YoutubeSaver,
 ) -> Result<()> {
+    let mut save_job: Option<SaveJob> = None;
     draw_ui(terminal, app, artwork)?;
 
     while !app.should_quit {
         if !event::poll(Duration::from_millis(100))? {
             sync_playback(app, player)?;
             advance_finished_queue(app, player);
+            poll_save_job(app, &mut save_job).await;
             draw_ui(terminal, app, artwork)?;
             continue;
         }
@@ -204,18 +213,44 @@ async fn run_event_loop(
             }
             Action::QueueNext => play_queue_relative(app, player, 1),
             Action::QueuePrevious => play_queue_relative(app, player, -1),
-            Action::SaveToPlex => {
-                app.status = "Plex save workflow is not implemented yet".to_owned();
+            Action::SaveToPlex if save_job.is_some() => {
+                app.status = "A Plex save is already running".to_owned();
             }
+            Action::SaveToPlex => match app.playback.current.clone() {
+                Some(video) => {
+                    let saver = saver.clone();
+                    save_job = Some(tokio::spawn(async move { saver.save(&video).await }));
+                    app.status = "Saving current video for Plex…".to_owned();
+                }
+                None => app.status = "Nothing is playing".to_owned(),
+            },
         }
 
         update_artwork(app, artwork).await;
         sync_playback(app, player)?;
+        poll_save_job(app, &mut save_job).await;
         draw_ui(terminal, app, artwork)?;
     }
 
+    if let Some(job) = save_job {
+        job.abort();
+    }
     let _ = player.stop();
     Ok(())
+}
+
+async fn poll_save_job(app: &mut App, save_job: &mut Option<SaveJob>) {
+    if !save_job.as_ref().is_some_and(|job| job.is_finished()) {
+        return;
+    }
+    let Some(job) = save_job.take() else {
+        return;
+    };
+    app.status = match job.await {
+        Ok(Ok(path)) => format!("Saved for Plex: {}", path.display()),
+        Ok(Err(error)) => format!("Could not save for Plex: {error}"),
+        Err(error) => format!("Plex save task failed: {error}"),
+    };
 }
 
 fn play_video(app: &mut App, player: &mut MpvEngine, video: yourgroovetube::models::Video) -> bool {

@@ -57,13 +57,15 @@ catalog concern.
 ## Plex import
 
 Saving is never automatic. The user must press the save key while a video is
-playing. The implementation will:
+playing. A background task:
 
-- verify the destination is inside the configured library root;
-- download to a unique partial file outside the final path;
-- sanitize the title and include the YouTube video ID;
-- move the completed file atomically where the filesystem permits; and
-- preserve the partial file and report a useful error when recovery is possible.
+- canonicalizes the configured library and a hidden staging directory beneath it;
+- invokes yt-dlp without a shell and forces single-video MP4 remuxing;
+- sanitizes the title, removes output-template metacharacters, and includes the
+  YouTube video ID;
+- verifies yt-dlp's reported output remains inside the staging directory; and
+- atomically renames the completed file into the library, treating an existing
+  destination as an idempotent success.
 
 The default destination is `/nas/video/Saved Youtube Videos`.
 
