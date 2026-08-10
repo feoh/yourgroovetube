@@ -11,7 +11,7 @@ use yourgroovetube::models::PlaybackMode;
 use yourgroovetube::playback::{MpvEngine, PlaybackEngine, PlaybackError};
 use yourgroovetube::provider::{SearchQuery, VideoCatalog};
 use yourgroovetube::ui;
-use yourgroovetube::youtube::YoutubeCatalog;
+use yourgroovetube::youtube::{YoutubeCatalog, parse_playlist_id};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -110,6 +110,7 @@ async fn run_event_loop(
     while !app.should_quit {
         if !event::poll(Duration::from_millis(100))? {
             sync_playback(app, player)?;
+            advance_finished_queue(app, player);
             draw_ui(terminal, app, artwork)?;
             continue;
         }
@@ -133,6 +134,25 @@ async fn run_event_loop(
                     Err(error) => app.status = format!("Search failed: {error}"),
                 }
             }
+            Action::LoadPlaylist(value) => {
+                let Some(catalog) = catalog else {
+                    app.status =
+                        "Configure a YouTube Data API key before opening playlists".to_owned();
+                    draw_ui(terminal, app, artwork)?;
+                    continue;
+                };
+                match parse_playlist_id(&value) {
+                    Ok(playlist_id) => {
+                        app.status = "Loading playlist…".to_owned();
+                        draw_ui(terminal, app, artwork)?;
+                        match catalog.playlist(&playlist_id, None).await {
+                            Ok(page) => app.replace_playlist_page(page, playlist_id),
+                            Err(error) => app.status = format!("Could not load playlist: {error}"),
+                        }
+                    }
+                    Err(error) => app.status = error.to_string(),
+                }
+            }
             Action::NextPage => {
                 let Some(catalog) = catalog else {
                     app.status = "Configure a YouTube Data API key before loading more".to_owned();
@@ -144,7 +164,9 @@ async fn run_event_loop(
                 };
                 app.status = "Loading more videos…".to_owned();
                 draw_ui(terminal, app, artwork)?;
-                let result = if let Some(query) = app.active_search.clone() {
+                let result = if let Some(playlist_id) = app.active_playlist.clone() {
+                    catalog.playlist(&playlist_id, Some(page_token)).await
+                } else if let Some(query) = app.active_search.clone() {
                     let mut search = SearchQuery::new(query);
                     search.page_token = Some(page_token);
                     catalog.search(search).await
@@ -156,13 +178,9 @@ async fn run_event_loop(
                     Err(error) => app.status = format!("Could not load more videos: {error}"),
                 }
             }
-            Action::Play(video) => match player.play(&video, app.playback.mode) {
-                Ok(()) => {
-                    app.start_playback(video);
-                    app.status = "Playing through mpv".to_owned();
-                }
-                Err(error) => app.status = format!("Playback failed: {error}"),
-            },
+            Action::Play(video) => {
+                play_video(app, player, video);
+            }
             Action::SetMode(mode) => match player.set_mode(mode) {
                 Ok(()) => app.status = format!("Playback mode: {}", mode.label()),
                 Err(error) => app.status = format!("Could not change playback mode: {error}"),
@@ -184,6 +202,8 @@ async fn run_event_loop(
                     Err(error) => app.status = format!("Could not pause playback: {error}"),
                 }
             }
+            Action::QueueNext => play_queue_relative(app, player, 1),
+            Action::QueuePrevious => play_queue_relative(app, player, -1),
             Action::SaveToPlex => {
                 app.status = "Plex save workflow is not implemented yet".to_owned();
             }
@@ -196,6 +216,44 @@ async fn run_event_loop(
 
     let _ = player.stop();
     Ok(())
+}
+
+fn play_video(app: &mut App, player: &mut MpvEngine, video: yourgroovetube::models::Video) -> bool {
+    match player.play(&video, app.playback.mode) {
+        Ok(()) => {
+            app.prepare_queue(&video);
+            app.start_playback(video);
+            app.status = "Playing through mpv".to_owned();
+            true
+        }
+        Err(error) => {
+            app.status = format!("Playback failed: {error}");
+            false
+        }
+    }
+}
+
+fn play_queue_relative(app: &mut App, player: &mut MpvEngine, delta: isize) {
+    match app.queue_relative(delta) {
+        Some(video) => {
+            play_video(app, player, video);
+        }
+        None => app.status = "No playlist video in that direction".to_owned(),
+    }
+}
+
+fn advance_finished_queue(app: &mut App, player: &mut MpvEngine) {
+    if !app.playback.eof_reached || app.queue_index.is_none() {
+        return;
+    }
+    match app.finish_queue_item() {
+        Some(video) => {
+            if !play_video(app, player, video) {
+                app.queue_index = None;
+            }
+        }
+        None => app.status = "Playlist queue finished".to_owned(),
+    }
 }
 
 fn draw_ui(

@@ -9,10 +9,13 @@ pub enum Action {
     None,
     Quit,
     Search(String),
+    LoadPlaylist(String),
     NextPage,
     Play(Video),
     SetMode(PlaybackMode),
     TogglePause,
+    QueueNext,
+    QueuePrevious,
     SaveToPlex,
 }
 
@@ -22,12 +25,17 @@ pub struct App {
     pub selected: usize,
     pub search_active: bool,
     pub search_query: String,
+    pub playlist_active: bool,
+    pub playlist_query: String,
     pub help_visible: bool,
     pub should_quit: bool,
     pub status: String,
     pub feed_label: String,
     pub active_search: Option<String>,
+    pub active_playlist: Option<String>,
     pub next_page_token: Option<String>,
+    pub queue: Vec<Video>,
+    pub queue_index: Option<usize>,
     pub playback: PlaybackSnapshot,
 }
 
@@ -43,12 +51,17 @@ impl App {
             selected: 0,
             search_active: false,
             search_query: String::new(),
+            playlist_active: false,
+            playlist_query: String::new(),
             help_visible: false,
             should_quit: false,
             status,
             feed_label: "Popular videos".to_owned(),
             active_search: None,
+            active_playlist: None,
             next_page_token: None,
+            queue: Vec::new(),
+            queue_index: None,
             playback: PlaybackSnapshot::default(),
         }
     }
@@ -66,14 +79,58 @@ impl App {
             |query| format!("Search · {query}"),
         );
         self.active_search = search;
+        self.active_playlist = None;
+        self.queue.clear();
+        self.queue_index = None;
         self.status = format!("Loaded {} videos", self.videos.len());
+    }
+
+    pub fn replace_playlist_page(&mut self, page: CatalogPage, playlist_id: String) {
+        self.videos = page.videos;
+        self.selected = 0;
+        self.next_page_token = page.next_page_token;
+        self.feed_label = format!("Playlist · {playlist_id}");
+        self.active_search = None;
+        self.active_playlist = Some(playlist_id);
+        self.queue.clear();
+        self.queue_index = None;
+        self.status = format!("Loaded {} playlist videos", self.videos.len());
     }
 
     pub fn append_catalog_page(&mut self, page: CatalogPage) {
         let added = page.videos.len();
+        if self.active_playlist.is_some() && !self.queue.is_empty() {
+            self.queue.extend(page.videos.iter().cloned());
+        }
         self.videos.extend(page.videos);
         self.next_page_token = page.next_page_token;
         self.status = format!("Loaded {added} more videos ({} total)", self.videos.len());
+    }
+
+    pub fn prepare_queue(&mut self, video: &Video) {
+        if self.active_playlist.is_some() {
+            self.queue = self.videos.clone();
+            self.queue_index = self.queue.iter().position(|item| item.id == video.id);
+        } else {
+            self.queue.clear();
+            self.queue_index = None;
+        }
+    }
+
+    pub fn queue_relative(&mut self, delta: isize) -> Option<Video> {
+        let current = self.queue_index?;
+        let next = current.checked_add_signed(delta)?;
+        let video = self.queue.get(next)?.clone();
+        self.queue_index = Some(next);
+        Some(video)
+    }
+
+    pub fn finish_queue_item(&mut self) -> Option<Video> {
+        let next = self.queue_relative(1);
+        if next.is_none() {
+            self.queue_index = None;
+        }
+        next
     }
 
     pub fn start_playback(&mut self, video: Video) {
@@ -90,6 +147,9 @@ impl App {
         if self.search_active {
             return self.handle_search_key(key.code);
         }
+        if self.playlist_active {
+            return self.handle_playlist_key(key.code);
+        }
         if self.help_visible {
             self.help_visible = false;
             return Action::None;
@@ -104,6 +164,11 @@ impl App {
             KeyCode::Char('/') => {
                 self.search_active = true;
                 self.search_query.clear();
+                Action::None
+            }
+            KeyCode::Char('P') => {
+                self.playlist_active = true;
+                self.playlist_query.clear();
                 Action::None
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -126,7 +191,36 @@ impl App {
             }
             KeyCode::Char('n') if self.next_page_token.is_some() => Action::NextPage,
             KeyCode::Char(' ') => Action::TogglePause,
+            KeyCode::Char(']') if self.queue_index.is_some() => Action::QueueNext,
+            KeyCode::Char('[') if self.queue_index.is_some() => Action::QueuePrevious,
             KeyCode::Char('s') => Action::SaveToPlex,
+            _ => Action::None,
+        }
+    }
+
+    fn handle_playlist_key(&mut self, code: KeyCode) -> Action {
+        match code {
+            KeyCode::Esc => {
+                self.playlist_active = false;
+                Action::None
+            }
+            KeyCode::Enter => {
+                self.playlist_active = false;
+                let value = self.playlist_query.trim().to_owned();
+                if value.is_empty() {
+                    Action::None
+                } else {
+                    Action::LoadPlaylist(value)
+                }
+            }
+            KeyCode::Backspace => {
+                self.playlist_query.pop();
+                Action::None
+            }
+            KeyCode::Char(character) => {
+                self.playlist_query.push(character);
+                Action::None
+            }
             _ => Action::None,
         }
     }
@@ -188,6 +282,49 @@ mod tests {
 
         assert_eq!(action, Action::Search("q".to_owned()));
         assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn playlist_input_captures_urls_before_global_shortcuts() {
+        let mut app = App::new(true);
+
+        app.handle_key(key(KeyCode::Char('P')));
+        for character in "PL1234567890".chars() {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
+        let action = app.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(action, Action::LoadPlaylist("PL1234567890".to_owned()));
+        assert!(!app.playlist_active);
+    }
+
+    #[test]
+    fn playlist_queue_moves_in_order() {
+        let mut app = App::new(true);
+        app.active_playlist = Some("PL1234567890".to_owned());
+        app.videos = ["first", "second", "third"]
+            .into_iter()
+            .map(|id| Video {
+                id: id.to_owned(),
+                ..Video::default()
+            })
+            .collect();
+        let first = app.videos[0].clone();
+        app.prepare_queue(&first);
+
+        assert_eq!(
+            app.queue_relative(1).map(|video| video.id),
+            Some("second".to_owned())
+        );
+        assert_eq!(
+            app.queue_relative(1).map(|video| video.id),
+            Some("third".to_owned())
+        );
+        assert!(app.queue_relative(1).is_none());
+        assert_eq!(
+            app.queue_relative(-1).map(|video| video.id),
+            Some("second".to_owned())
+        );
     }
 
     #[test]

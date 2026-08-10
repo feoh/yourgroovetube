@@ -26,9 +26,11 @@ collapsing into one component.
 Search uses `search.list(type=video)` only after explicit submission because it
 costs 100 quota units per call. Returned IDs are hydrated in a single
 `videos.list(part=snippet,contentDetails,status)` call, which costs one unit.
-Pages are cached in memory for five minutes and pagination is explicit. API
-errors deliberately omit request URLs so query-string credentials cannot leak
-through error displays.
+Pages are cached in memory for five minutes and pagination is explicit. Public
+and unlisted playlists use `playlistItems.list(part=contentDetails)` followed by
+the same ordered metadata hydration; private playlists remain out of scope until
+OAuth support exists. API errors deliberately omit request URLs so query-string
+credentials cannot leak through error displays.
 
 The YouTube Data API does not expose the signed-in user's personalized Home
 recommendations. The default screen therefore uses
@@ -47,8 +49,10 @@ The UI refreshes the shared snapshot at ten frames per second.
 Video mode allows mpv to render normally. Audio mode sets `vid=no` and pins the
 currently playing video's thumbnail in the TUI. The renderer detects Kitty,
 iTerm2, and Sixel support through `ratatui-image`, with a Unicode half-block
-fallback and a `--no-images` override. Mode is a playback concern rather than a
-search or catalog concern.
+fallback and a `--no-images` override. Playlist playback builds an ordered queue
+from hydrated playlist items, advances on mpv's EOF event, and supports manual
+previous/next controls. Mode is a playback concern rather than a search or
+catalog concern.
 
 ## Plex import
 

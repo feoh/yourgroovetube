@@ -28,7 +28,20 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, artwork: Option<&mut ArtworkState>
     );
 
     if app.search_active {
-        render_search(frame, centered_rect(70, 5, frame.area()), app);
+        render_input(
+            frame,
+            centered_rect(70, 5, frame.area()),
+            " Search title or tags ",
+            &app.search_query,
+        );
+    }
+    if app.playlist_active {
+        render_input(
+            frame,
+            centered_rect(70, 5, frame.area()),
+            " Open playlist URL or ID ",
+            &app.playlist_query,
+        );
     }
     if app.help_visible {
         render_help(frame, centered_rect(60, 15, frame.area()));
@@ -37,7 +50,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, artwork: Option<&mut ArtworkState>
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let controls = if area.width >= 100 {
-        "  / search  n more  Enter play  m mode  Space pause  s save  ? help  q quit"
+        "  / search  P playlist  n more  [/] track  m mode  Space pause  s save  ? help  q quit"
     } else {
         "  / search  ? help  q quit"
     };
@@ -190,17 +203,13 @@ fn render_player(frame: &mut Frame<'_>, area: Rect, app: &App) {
     frame.render_widget(gauge, area);
 }
 
-fn render_search(frame: &mut Frame<'_>, area: Rect, app: &App) {
+fn render_input(frame: &mut Frame<'_>, area: Rect, title: &str, value: &str) {
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(app.search_query.as_str()).block(
-            Block::default()
-                .title(" Search title or tags ")
-                .borders(Borders::ALL),
-        ),
+        Paragraph::new(value).block(Block::default().title(title).borders(Borders::ALL)),
         area,
     );
-    let cursor_offset = app.search_query.chars().count() as u16;
+    let cursor_offset = value.chars().count() as u16;
     frame.set_cursor_position((area.x + cursor_offset + 1, area.y + 1));
 }
 
@@ -212,6 +221,8 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
              j/k     Move through videos\n\
              Enter   Play selected video\n\
              n       Load the next result page\n\
+             P       Open a YouTube playlist URL or ID\n\
+             [ / ]   Previous / next playlist video\n\
              m       Toggle video / audio + thumbnail\n\
              Space   Pause or resume\n\
              s       Save current video to Plex directory\n\

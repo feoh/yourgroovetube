@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, StatusCode, Url};
 use serde::Deserialize;
 
 use crate::models::Video;
@@ -24,6 +24,7 @@ pub struct YoutubeCatalog {
 enum CacheKey {
     Default(Option<String>),
     Search(SearchQuery),
+    Playlist(String, Option<String>),
 }
 
 #[derive(Clone)]
@@ -147,6 +148,38 @@ impl YoutubeCatalog {
         Ok(page)
     }
 
+    async fn playlist_inner(
+        &self,
+        playlist_id: &str,
+        page_token: Option<String>,
+    ) -> Result<CatalogPage, CatalogError> {
+        let playlist_id = parse_playlist_id(playlist_id)?;
+        let key = CacheKey::Playlist(playlist_id.clone(), page_token.clone());
+        if let Some(page) = self.cached(&key)? {
+            return Ok(page);
+        }
+        let mut params = vec![
+            ("part", "contentDetails".to_owned()),
+            ("playlistId", playlist_id),
+            ("maxResults", self.results_per_page.to_string()),
+        ];
+        if let Some(token) = page_token {
+            params.push(("pageToken", token));
+        }
+        let response: PlaylistItemsResponse = self.get_json("playlistItems", params).await?;
+        let ordered_ids = response
+            .items
+            .into_iter()
+            .map(|item| item.content_details.video_id)
+            .collect::<Vec<_>>();
+        let page = CatalogPage {
+            videos: self.hydrate(&ordered_ids).await?,
+            next_page_token: response.next_page_token,
+        };
+        self.store(key, page.clone())?;
+        Ok(page)
+    }
+
     async fn hydrate(&self, ordered_ids: &[String]) -> Result<Vec<Video>, CatalogError> {
         if ordered_ids.is_empty() {
             return Ok(Vec::new());
@@ -224,6 +257,53 @@ impl VideoCatalog for YoutubeCatalog {
     fn search(&self, query: SearchQuery) -> CatalogFuture<'_> {
         Box::pin(self.search_inner(query))
     }
+
+    fn playlist<'a>(
+        &'a self,
+        playlist_id: &'a str,
+        page_token: Option<String>,
+    ) -> CatalogFuture<'a> {
+        Box::pin(self.playlist_inner(playlist_id, page_token))
+    }
+}
+
+pub fn parse_playlist_id(value: &str) -> Result<String, CatalogError> {
+    let value = value.trim();
+    if is_playlist_id(value) {
+        return Ok(value.to_owned());
+    }
+    let url = Url::parse(value).map_err(|_| {
+        CatalogError::InvalidConfiguration("enter a YouTube playlist URL or playlist ID".to_owned())
+    })?;
+    let trusted_host = url.host_str().is_some_and(|host| {
+        let host = host.to_ascii_lowercase();
+        host == "youtube.com" || host.ends_with(".youtube.com") || host == "youtu.be"
+    });
+    if url.scheme() != "https"
+        || !trusted_host
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(CatalogError::InvalidConfiguration(
+            "playlist URL must be an HTTPS YouTube URL".to_owned(),
+        ));
+    }
+    url.query_pairs()
+        .find(|(key, _)| key == "list")
+        .map(|(_, id)| id.into_owned())
+        .filter(|id| is_playlist_id(id))
+        .ok_or_else(|| {
+            CatalogError::InvalidConfiguration(
+                "YouTube URL does not contain a valid playlist ID".to_owned(),
+            )
+        })
+}
+
+fn is_playlist_id(value: &str) -> bool {
+    (10..=100).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 fn api_error(status: StatusCode, body: &[u8]) -> CatalogError {
@@ -253,6 +333,26 @@ struct SearchItem {
 #[serde(rename_all = "camelCase")]
 struct SearchItemId {
     video_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaylistItemsResponse {
+    next_page_token: Option<String>,
+    #[serde(default)]
+    items: Vec<PlaylistItem>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaylistItem {
+    content_details: PlaylistContentDetails,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaylistContentDetails {
+    video_id: String,
 }
 
 #[derive(Deserialize)]
@@ -407,6 +507,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parses_raw_and_url_playlist_ids() {
+        assert_eq!(
+            parse_playlist_id("PL1234567890").ok().as_deref(),
+            Some("PL1234567890")
+        );
+        assert_eq!(
+            parse_playlist_id("https://www.youtube.com/playlist?list=PL1234567890")
+                .ok()
+                .as_deref(),
+            Some("PL1234567890")
+        );
+        assert_eq!(
+            parse_playlist_id("https://music.youtube.com/watch?v=abc&list=PL1234567890")
+                .ok()
+                .as_deref(),
+            Some("PL1234567890")
+        );
+        assert!(parse_playlist_id("https://example.test/?list=PL1234567890").is_err());
+    }
+
+    #[test]
     fn parses_youtube_iso8601_durations() {
         assert_eq!(parse_iso8601_duration("PT4M13S"), Some(253));
         assert_eq!(parse_iso8601_duration("PT1H2M3S"), Some(3_723));
@@ -447,6 +568,52 @@ mod tests {
             Some("https://example.test/high.jpg")
         );
         assert_eq!(video.embeddable, Some(true));
+    }
+
+    #[tokio::test]
+    async fn playlist_items_are_hydrated_in_playlist_order()
+    -> Result<(), Box<dyn Error + Send + Sync>> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let responses = vec![
+            r#"{
+                "nextPageToken": "more-playlist",
+                "items": [
+                    {"contentDetails": {"videoId": "playlist-video"}}
+                ]
+            }"#
+            .to_owned(),
+            r#"{
+                "items": [{
+                    "id": "playlist-video",
+                    "snippet": {
+                        "title": "Playlist Video",
+                        "channelTitle": "Channel",
+                        "description": "",
+                        "thumbnails": {}
+                    },
+                    "contentDetails": {"duration": "PT5M"},
+                    "status": {"privacyStatus": "unlisted", "embeddable": true}
+                }]
+            }"#
+            .to_owned(),
+        ];
+        let server = tokio::spawn(serve_json_responses(listener, responses));
+        let catalog =
+            YoutubeCatalog::with_base_url("test-api-key", "US", 25, format!("http://{address}/"))?;
+
+        let page = catalog.playlist("PL1234567890", None).await?;
+        let requests = server.await??;
+
+        assert_eq!(
+            page.videos.first().map(|video| video.id.as_str()),
+            Some("playlist-video")
+        );
+        assert_eq!(page.next_page_token.as_deref(), Some("more-playlist"));
+        assert!(requests[0].starts_with("GET /playlistItems?"));
+        assert!(requests[0].contains("playlistId=PL1234567890"));
+        assert!(requests[1].starts_with("GET /videos?"));
+        Ok(())
     }
 
     #[tokio::test]

@@ -24,8 +24,8 @@ A keyboard-driven terminal YouTube viewer built with Rust and
 ## Current status
 
 The repository contains a runnable application with live, official YouTube Data
-API discovery, persistent mpv playback, and terminal thumbnails. Playlist queues
-and Plex import remain tracked Witan milestones.
+API discovery, persistent mpv playback, terminal thumbnails, and YouTube
+playlist queues. Plex import remains the final tracked MVP feature.
 
 The application already includes:
 
@@ -37,6 +37,8 @@ The application already includes:
 - observed playback position, duration, end state, and IPC errors;
 - automatic Kitty, iTerm2, Sixel, or Unicode half-block thumbnails;
 - audio mode that keeps the current video's thumbnail visible while `vid=no`;
+- public/unlisted playlist loading with pagination, automatic queue advancement,
+  and manual previous/next controls;
 - keyboard/search state and a responsive Ratatui layout;
 - a live now-playing progress gauge;
 - platform-standard configuration loading;
@@ -99,7 +101,9 @@ Do not commit API keys, tokens, cookies, or captured YouTube responses.
 | --- | --- |
 | `/` | Search by title or tags |
 | `j`/`k` or arrows | Select a video |
-| `n` | Load the next result page |
+| `n` | Load the next result or playlist page |
+| `P` | Open a public/unlisted playlist URL or ID |
+| `[` / `]` | Play the previous/next loaded playlist video |
 | `Enter` or `p` | Play the selected video |
 | `m` | Toggle video / audio-with-thumbnail mode |
 | `Space` | Pause or resume |

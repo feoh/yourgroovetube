@@ -58,6 +58,11 @@ pub enum CatalogError {
 pub trait VideoCatalog: Send + Sync {
     fn default_feed(&self, page_token: Option<String>) -> CatalogFuture<'_>;
     fn search(&self, query: SearchQuery) -> CatalogFuture<'_>;
+    fn playlist<'a>(
+        &'a self,
+        playlist_id: &'a str,
+        page_token: Option<String>,
+    ) -> CatalogFuture<'a>;
 }
 
 #[cfg(test)]
