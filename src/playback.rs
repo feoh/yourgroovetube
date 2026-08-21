@@ -68,11 +68,18 @@ pub struct MpvEngine {
     runtime_directory: Option<TempDir>,
     ipc_path: Option<String>,
     next_request_id: u64,
+    cookies_from_browser: Option<String>,
     snapshot: Arc<Mutex<PlaybackSnapshot>>,
 }
 
 impl Default for MpvEngine {
     fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+impl MpvEngine {
+    pub fn new(cookies_from_browser: Option<String>) -> Self {
         Self {
             child: None,
             writer: None,
@@ -80,17 +87,12 @@ impl Default for MpvEngine {
             runtime_directory: None,
             ipc_path: None,
             next_request_id: 100,
+            cookies_from_browser,
             snapshot: Arc::new(Mutex::new(PlaybackSnapshot {
                 idle: true,
                 ..PlaybackSnapshot::default()
             })),
         }
-    }
-}
-
-impl MpvEngine {
-    pub fn new() -> Self {
-        Self::default()
     }
 
     fn ensure_started(&mut self) -> Result<(), PlaybackError> {
@@ -106,16 +108,11 @@ impl MpvEngine {
             .tempdir()
             .map_err(PlaybackError::RuntimeDirectory)?;
         let ipc_path = ipc_endpoint(&runtime_directory);
-        let ipc_argument = format!("--input-ipc-server={ipc_path}");
         let mut child = Command::new("mpv")
-            .args([
-                "--idle=yes",
-                "--no-terminal",
-                "--really-quiet",
-                "--ytdl=yes",
-                "--script-opts=ytdl_hook-ytdl_path=yt-dlp",
-                ipc_argument.as_str(),
-            ])
+            .args(mpv_arguments(
+                &ipc_path,
+                self.cookies_from_browser.as_deref(),
+            ))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -242,8 +239,9 @@ impl MpvEngine {
 impl PlaybackEngine for MpvEngine {
     fn play(&mut self, video: &Video, mode: PlaybackMode) -> Result<(), PlaybackError> {
         self.ensure_started()?;
-        self.write_command(json!(["set_property", "vid", mode.mpv_vid()]))?;
-        self.write_command(json!(["loadfile", video.watch_url(), "replace"]))?;
+        for command in play_commands(&video.watch_url(), mode) {
+            self.write_command(command)?;
+        }
         self.update_snapshot(|snapshot| {
             snapshot.current = Some(video.clone());
             snapshot.mode = mode;
@@ -306,6 +304,37 @@ impl PlaybackMode {
             Self::Audio => "no",
         }
     }
+}
+
+fn mpv_arguments(ipc_path: &str, cookies_from_browser: Option<&str>) -> Vec<String> {
+    let mut arguments = vec![
+        "--idle=yes".to_owned(),
+        "--no-terminal".to_owned(),
+        "--really-quiet".to_owned(),
+        "--ytdl=yes".to_owned(),
+        "--script-opts=ytdl_hook-ytdl_path=yt-dlp".to_owned(),
+        format!("--input-ipc-server={ipc_path}"),
+    ];
+    if let Some(browser) = cookies_from_browser {
+        // -append takes one key/value pair verbatim, so a profile or container
+        // suffix cannot be mistaken for a second mpv option.
+        arguments.push(format!(
+            "--ytdl-raw-options-append=cookies-from-browser={browser}"
+        ));
+    }
+    arguments
+}
+
+// mpv's pause flag belongs to the player rather than the file, so it survives
+// loadfile, and an unchanged property emits no property-change to observe. A
+// pause left over from the previous track would therefore load the new one into
+// silence that nothing ever reports.
+fn play_commands(url: &str, mode: PlaybackMode) -> [Value; 3] {
+    [
+        json!(["set_property", "pause", false]),
+        json!(["set_property", "vid", mode.mpv_vid()]),
+        json!(["loadfile", url, "replace"]),
+    ]
 }
 
 fn command_payload(command: Value, request_id: u64) -> Result<Vec<u8>, serde_json::Error> {
@@ -521,9 +550,26 @@ mod tests {
     }
 
     #[test]
+    fn cookie_extraction_is_requested_only_when_a_browser_is_configured() {
+        let anonymous = mpv_arguments("/tmp/mpv.sock", None);
+        let authenticated = mpv_arguments("/tmp/mpv.sock", Some("firefox:default"));
+
+        assert!(anonymous.contains(&"--input-ipc-server=/tmp/mpv.sock".to_owned()));
+        assert!(
+            !anonymous
+                .iter()
+                .any(|argument| argument.contains("cookies-from-browser"))
+        );
+        assert_eq!(
+            authenticated.last().map(String::as_str),
+            Some("--ytdl-raw-options-append=cookies-from-browser=firefox:default")
+        );
+    }
+
+    #[test]
     #[ignore = "requires mpv on PATH"]
     fn mpv_process_exposes_a_live_json_ipc_connection() -> Result<(), PlaybackError> {
-        let mut engine = MpvEngine::new();
+        let mut engine = MpvEngine::new(None);
 
         engine.ensure_started()?;
         thread::sleep(Duration::from_millis(100));
@@ -550,5 +596,35 @@ mod tests {
 
         assert_eq!(snapshot.last_error.as_deref(), Some("loading failed"));
         assert!(snapshot.idle);
+    }
+
+    #[test]
+    fn playing_releases_a_pause_left_behind_by_the_previous_track() {
+        let commands = play_commands("https://example.test/watch?v=abc", PlaybackMode::Video);
+
+        assert_eq!(commands[0], json!(["set_property", "pause", false]));
+        assert_eq!(commands[1], json!(["set_property", "vid", "auto"]));
+        assert_eq!(
+            commands[2],
+            json!(["loadfile", "https://example.test/watch?v=abc", "replace"])
+        );
+    }
+
+    #[test]
+    fn a_failed_load_reports_neither_playback_nor_a_finished_file() {
+        let mut snapshot = PlaybackSnapshot::default();
+
+        apply_mpv_message(&mut snapshot, &json!({"event": "start-file"}));
+        apply_mpv_message(
+            &mut snapshot,
+            &json!({"event": "end-file", "reason": "error", "file_error": "unrecognized file format"}),
+        );
+        apply_mpv_message(
+            &mut snapshot,
+            &json!({"event": "property-change", "name": "idle-active", "data": true}),
+        );
+
+        assert!(snapshot.idle);
+        assert!(!snapshot.eof_reached);
     }
 }

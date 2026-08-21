@@ -120,12 +120,34 @@ Alternatively, create or edit the file printed by `yourgroovetube config path`:
 api_key = "your-key"
 region_code = "US"
 results_per_page = 25
+# Optional; unset means anonymous extraction.
+# cookies_from_browser = "firefox"
 
 [plex]
 library_dir = "/nas/video/Saved Youtube Videos"
 ```
 
 Do not commit API keys, tokens, cookies, or captured YouTube responses.
+
+### Optional cookie extraction
+
+Anonymous `yt-dlp` extraction occasionally trips a YouTube bot check, which
+surfaces as a `[stopped]` track and an `mpv:` error in the status line. Setting
+`cookies_from_browser` makes both playback and Plex saving reuse an existing
+browser login, accepting the value format that `yt-dlp --cookies-from-browser`
+documents (`BROWSER[+KEYRING][:PROFILE][::CONTAINER]`), for example `firefox`,
+`chrome:Profile 1`, or `brave`.
+
+This is deliberately opt-in and unset by default:
+
+- it attaches a real YouTube account to extractor traffic, which raises the
+  policy risk described in [the policy boundary](docs/youtube-api-and-policy.md);
+- `yt-dlp` reads the browser's cookie store directly, and YouTube may rotate or
+  invalidate a session that is in use elsewhere, logging that browser out; and
+- it requires a local browser profile, so it cannot work on a headless host.
+
+A dedicated browser profile used only by `yourgroovetube` avoids disturbing a
+primary login. Confirm the resolved setting with `yourgroovetube doctor`.
 
 ## Planned keybindings
 

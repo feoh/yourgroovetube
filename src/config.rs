@@ -24,6 +24,12 @@ pub struct YoutubeConfig {
     pub region_code: String,
     #[serde(default = "default_results_per_page")]
     pub results_per_page: u8,
+    /// Browser to read YouTube cookies from, in yt-dlp
+    /// `BROWSER[+KEYRING][:PROFILE][::CONTAINER]` form. Leaving this unset keeps
+    /// extraction anonymous, which avoids attaching a real account to yt-dlp
+    /// traffic at the cost of occasional bot checks.
+    #[serde(default)]
+    pub cookies_from_browser: Option<String>,
 }
 
 impl Default for YoutubeConfig {
@@ -32,6 +38,7 @@ impl Default for YoutubeConfig {
             api_key: None,
             region_code: default_region_code(),
             results_per_page: default_results_per_page(),
+            cookies_from_browser: None,
         }
     }
 }
@@ -99,6 +106,15 @@ impl AppConfig {
             path: path.to_path_buf(),
             message: source.message().to_owned(),
         })
+    }
+
+    pub fn cookies_from_browser(&self) -> Option<String> {
+        self.youtube
+            .cookies_from_browser
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
     }
 
     pub fn youtube_api_key(&self) -> Option<String> {
@@ -175,6 +191,7 @@ mod tests {
                 api_key: Some("local-development-key".to_owned()),
                 region_code: "CA".to_owned(),
                 results_per_page: 40,
+                cookies_from_browser: Some("firefox".to_owned()),
             },
             plex: PlexConfig::default(),
         };
@@ -243,6 +260,24 @@ mod tests {
             };
             assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn cookie_extraction_stays_opt_in_and_ignores_blank_values() {
+        let Ok(mut config) = toml::from_str::<AppConfig>("[youtube]\nregion_code = \"GB\"\n")
+        else {
+            panic!("a config without the cookie setting should parse");
+        };
+        assert_eq!(config.cookies_from_browser(), None);
+
+        config.youtube.cookies_from_browser = Some("   ".to_owned());
+        assert_eq!(config.cookies_from_browser(), None);
+
+        config.youtube.cookies_from_browser = Some("  firefox:default  ".to_owned());
+        assert_eq!(
+            config.cookies_from_browser().as_deref(),
+            Some("firefox:default")
+        );
     }
 
     #[test]

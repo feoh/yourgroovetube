@@ -4,6 +4,20 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 0.1.2 - 2026-08-21
+
+- Fix playback that reported itself as playing but stayed frozen at `0:00` with
+  no sound. Starting a track now clears a pause left behind by the previous
+  one, because mpv's pause flag survives `loadfile` and emits no property
+  change when it is already set.
+- Report `[stopped]` rather than `[playing]` once mpv has gone idle or its IPC
+  connection has dropped, so a failed `yt-dlp` resolution or an exited mpv is no
+  longer displayed as active playback.
+- Add optional `youtube.cookies_from_browser` configuration that reuses an
+  existing browser login for both mpv playback and Plex saving, reducing
+  anonymous extraction bot checks. It stays unset by default and is reported by
+  `doctor`.
+
 ## 0.1.1 - 2026-08-10
 
 - Require a validated YouTube Data API key before starting the TUI, securely

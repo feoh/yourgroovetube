@@ -1,5 +1,6 @@
+use std::ffi::OsString;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
 
@@ -30,12 +31,17 @@ pub enum SaveError {
 #[derive(Clone, Debug)]
 pub struct YoutubeSaver {
     library_directory: PathBuf,
+    cookies_from_browser: Option<String>,
 }
 
 impl YoutubeSaver {
-    pub fn new(library_directory: impl Into<PathBuf>) -> Self {
+    pub fn new(
+        library_directory: impl Into<PathBuf>,
+        cookies_from_browser: Option<String>,
+    ) -> Self {
         Self {
             library_directory: library_directory.into(),
+            cookies_from_browser,
         }
     }
 
@@ -60,21 +66,11 @@ impl YoutubeSaver {
         let base_name = safe_video_name(video);
         let output_template = staging.join(format!("{base_name}.%(ext)s"));
         let output = Command::new("yt-dlp")
-            .args([
-                "--no-playlist",
-                "--no-progress",
-                "--format",
-                "bestvideo*+bestaudio/best",
-                "--merge-output-format",
-                "mp4",
-                "--remux-video",
-                "mp4",
-                "--print",
-                "after_move:filepath",
-                "--output",
-            ])
-            .arg(&output_template)
-            .arg(video.watch_url())
+            .args(download_arguments(
+                &output_template,
+                &video.watch_url(),
+                self.cookies_from_browser.as_deref(),
+            ))
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true)
@@ -128,6 +124,36 @@ impl VideoSaver for YoutubeSaver {
     }
 }
 
+fn download_arguments(
+    output_template: &Path,
+    watch_url: &str,
+    cookies_from_browser: Option<&str>,
+) -> Vec<OsString> {
+    let mut arguments: Vec<OsString> = [
+        "--no-playlist",
+        "--no-progress",
+        "--format",
+        "bestvideo*+bestaudio/best",
+        "--merge-output-format",
+        "mp4",
+        "--remux-video",
+        "mp4",
+        "--print",
+        "after_move:filepath",
+        "--output",
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect();
+    arguments.push(output_template.into());
+    if let Some(browser) = cookies_from_browser {
+        arguments.push("--cookies-from-browser".into());
+        arguments.push(browser.into());
+    }
+    arguments.push(watch_url.into());
+    arguments
+}
+
 fn safe_video_name(video: &Video) -> String {
     let mut title = video
         .title
@@ -174,11 +200,41 @@ mod tests {
         assert!(!name.contains('/'));
     }
 
+    #[test]
+    fn cookie_extraction_is_opt_in_and_never_displaces_the_video_url() {
+        let template = PathBuf::from("/library/.staging/video.%(ext)s");
+        let url = "https://example.test/watch?v=abc";
+
+        let anonymous = download_arguments(&template, url, None);
+        let authenticated = download_arguments(&template, url, Some("brave"));
+
+        assert!(
+            !anonymous
+                .iter()
+                .any(|argument| argument == "--cookies-from-browser")
+        );
+        assert_eq!(
+            anonymous.last().map(OsString::as_os_str),
+            Some(url.as_ref())
+        );
+        assert_eq!(
+            authenticated.last().map(OsString::as_os_str),
+            Some(url.as_ref())
+        );
+        let flag = authenticated
+            .iter()
+            .position(|argument| argument == "--cookies-from-browser");
+        assert_eq!(
+            flag.and_then(|index| authenticated.get(index + 1)),
+            Some(&OsString::from("brave"))
+        );
+    }
+
     #[tokio::test]
     #[ignore = "downloads a real YouTube video with yt-dlp"]
     async fn downloads_and_imports_a_real_video() -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
-        let saver = YoutubeSaver::new(directory.path());
+        let saver = YoutubeSaver::new(directory.path(), None);
         let video = Video {
             id: "jNQXAC9IVRw".to_owned(),
             title: "Me at the zoo".to_owned(),

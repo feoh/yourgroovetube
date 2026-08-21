@@ -138,8 +138,12 @@ async fn run_app(no_images: bool) -> Result<()> {
         ArtworkState::detect()
     }
     .context("could not initialize terminal thumbnails")?;
-    let saver = YoutubeSaver::new(config.plex.library_dir.clone());
-    let mut player = MpvEngine::new();
+    let cookies_from_browser = config.cookies_from_browser();
+    let saver = YoutubeSaver::new(
+        config.plex.library_dir.clone(),
+        cookies_from_browser.clone(),
+    );
+    let mut player = MpvEngine::new(cookies_from_browser);
     let mut terminal = ratatui::init();
     let result = async {
         draw_ui(&mut terminal, &app, &mut artwork)?;
@@ -408,6 +412,10 @@ fn run_doctor() -> Result<()> {
         "  info YouTube region/page size: {}/{}",
         config.youtube.region_code, config.youtube.results_per_page
     );
+    match config.cookies_from_browser() {
+        Some(browser) => println!("  info yt-dlp cookies: from browser {browser}"),
+        None => println!("  info yt-dlp cookies: none (anonymous extraction)"),
+    }
     println!(
         "  info Plex destination: {}",
         config.plex.library_dir.display()

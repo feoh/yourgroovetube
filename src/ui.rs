@@ -203,6 +203,8 @@ fn render_player(frame: &mut Frame<'_>, area: Rect, app: &App) {
         "paused"
     } else if app.playback.eof_reached {
         "finished"
+    } else if app.playback.idle || !app.playback.connected {
+        "stopped"
     } else {
         "playing"
     };
@@ -281,6 +283,8 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use super::*;
+    use crate::models::Video;
+    use crate::playback::PlaybackSnapshot;
 
     fn draw_test_app(terminal: &mut Terminal<TestBackend>, app: &App) {
         if terminal.draw(|frame| draw(frame, app, None)).is_err() {
@@ -410,5 +414,59 @@ mod tests {
         assert!(rendered.contains("Popular videos"));
         assert!(rendered.contains("Details"));
         assert!(rendered.contains("Now playing"));
+    }
+
+    #[test]
+    fn an_mpv_that_stopped_early_is_never_reported_as_playing() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(never) => match never {},
+        };
+        let mut app = App::new();
+        app.playback = PlaybackSnapshot {
+            current: Some(Video {
+                title: "Jungle Mix".to_owned(),
+                duration_seconds: Some(7526),
+                ..Video::default()
+            }),
+            connected: true,
+            idle: true,
+            ..PlaybackSnapshot::default()
+        };
+
+        draw_test_app(&mut terminal, &app);
+        let rendered = terminal.backend().to_string();
+
+        assert!(rendered.contains("[stopped]"));
+        assert!(!rendered.contains("[playing]"));
+
+        app.playback.idle = false;
+        draw_test_app(&mut terminal, &app);
+
+        assert!(terminal.backend().to_string().contains("[playing]"));
+    }
+
+    #[test]
+    fn a_dead_ipc_connection_is_never_reported_as_playing() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(never) => match never {},
+        };
+        let mut app = App::new();
+        app.playback = PlaybackSnapshot {
+            current: Some(Video {
+                title: "Jungle Mix".to_owned(),
+                ..Video::default()
+            }),
+            connected: false,
+            idle: false,
+            ..PlaybackSnapshot::default()
+        };
+
+        draw_test_app(&mut terminal, &app);
+
+        assert!(terminal.backend().to_string().contains("[stopped]"));
     }
 }
