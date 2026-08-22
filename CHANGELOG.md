@@ -4,6 +4,8 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 0.1.3 - 2026-08-22
+
 - Report why a video failed to load instead of mpv's generic
   `unrecognized file format`. Error-level mpv log messages are now requested
   over the same IPC connection, and the first error of a load attempt wins, so
