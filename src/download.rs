@@ -234,7 +234,10 @@ mod tests {
     #[ignore = "downloads a real YouTube video with yt-dlp"]
     async fn downloads_and_imports_a_real_video() -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
-        let saver = YoutubeSaver::new(directory.path(), None);
+        let cookies = crate::config::AppConfig::load()
+            .ok()
+            .and_then(|config| config.cookies_from_browser());
+        let saver = YoutubeSaver::new(directory.path(), cookies);
         let video = Video {
             id: "jNQXAC9IVRw".to_owned(),
             title: "Me at the zoo".to_owned(),

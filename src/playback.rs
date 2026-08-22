@@ -161,14 +161,8 @@ impl MpvEngine {
     }
 
     fn initialize_observers(&mut self) -> Result<(), PlaybackError> {
-        for (observer_id, property) in [
-            (1, "time-pos"),
-            (2, "duration"),
-            (3, "pause"),
-            (4, "idle-active"),
-            (5, "eof-reached"),
-        ] {
-            self.write_command(json!(["observe_property", observer_id, property]))?;
+        for command in subscription_commands() {
+            self.write_command(command)?;
         }
         Ok(())
     }
@@ -306,6 +300,43 @@ impl PlaybackMode {
     }
 }
 
+// mpv reduces every resolution failure to "unrecognized file format", so the
+// actual reason (usually yt-dlp's stderr by way of ytdl_hook) is only available
+// as a log message. Requesting them over IPC works even under --really-quiet.
+fn subscription_commands() -> Vec<Value> {
+    let mut commands = vec![json!(["request_log_messages", "error"])];
+    for (observer_id, property) in [
+        (1, "time-pos"),
+        (2, "duration"),
+        (3, "pause"),
+        (4, "idle-active"),
+        (5, "eof-reached"),
+    ] {
+        commands.push(json!(["observe_property", observer_id, property]));
+    }
+    commands
+}
+
+// Log text can carry a signed googlevideo URL, which must not reach the status
+// line.
+fn redact_urls(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("http") {
+        let (head, tail) = rest.split_at(start);
+        out.push_str(head);
+        if tail.starts_with("http://") || tail.starts_with("https://") {
+            out.push_str("<url>");
+            rest = &tail[tail.find(char::is_whitespace).unwrap_or(tail.len())..];
+        } else {
+            out.push_str("http");
+            rest = &tail["http".len()..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn mpv_arguments(ipc_path: &str, cookies_from_browser: Option<&str>) -> Vec<String> {
     let mut arguments = vec![
         "--idle=yes".to_owned(),
@@ -398,7 +429,9 @@ fn apply_mpv_message(snapshot: &mut PlaybackSnapshot, message: &Value) {
             if message.get("reason").and_then(Value::as_str) == Some("eof") {
                 snapshot.eof_reached = true;
             }
-            if message.get("reason").and_then(Value::as_str) == Some("error") {
+            if message.get("reason").and_then(Value::as_str) == Some("error")
+                && snapshot.last_error.is_none()
+            {
                 snapshot.last_error = Some(
                     message
                         .get("file_error")
@@ -406,6 +439,18 @@ fn apply_mpv_message(snapshot: &mut PlaybackSnapshot, message: &Value) {
                         .unwrap_or("mpv could not play this video")
                         .to_owned(),
                 );
+            }
+        }
+        // The first error of a load attempt names the cause; later ones are
+        // mpv restating it generically, so they must not overwrite it.
+        Some("log-message") => {
+            if snapshot.last_error.is_none()
+                && let Some(text) = message.get("text").and_then(Value::as_str)
+            {
+                let text = redact_urls(text.trim());
+                if !text.is_empty() {
+                    snapshot.last_error = Some(text);
+                }
             }
         }
         Some("shutdown") => snapshot.connected = false,
@@ -567,6 +612,57 @@ mod tests {
     }
 
     #[test]
+    fn a_finished_file_stays_distinguishable_from_one_that_stopped_early() {
+        let mut snapshot = PlaybackSnapshot::default();
+
+        // mpv nulls eof-reached immediately before announcing end-file, so the
+        // event has to win or a clean finish looks like an early stop.
+        apply_mpv_message(&mut snapshot, &json!({"event": "file-loaded"}));
+        apply_mpv_message(
+            &mut snapshot,
+            &json!({"event": "property-change", "name": "eof-reached", "data": null}),
+        );
+        apply_mpv_message(
+            &mut snapshot,
+            &json!({"event": "end-file", "reason": "eof"}),
+        );
+        apply_mpv_message(
+            &mut snapshot,
+            &json!({"event": "property-change", "name": "idle-active", "data": true}),
+        );
+
+        assert!(snapshot.eof_reached);
+        assert!(snapshot.idle);
+    }
+
+    #[test]
+    #[ignore = "requires mpv, yt-dlp, network, and working YouTube extraction"]
+    fn real_youtube_playback_advances_the_reported_position() -> Result<(), PlaybackError> {
+        let cookies = crate::config::AppConfig::load()
+            .ok()
+            .and_then(|config| config.cookies_from_browser());
+        let mut engine = MpvEngine::new(cookies);
+        let video = Video {
+            id: "jNQXAC9IVRw".to_owned(),
+            ..Video::default()
+        };
+
+        engine.play(&video, PlaybackMode::Audio)?;
+        let mut observed = 0.0;
+        for _ in 0..120 {
+            thread::sleep(Duration::from_millis(500));
+            let snapshot = engine.snapshot()?;
+            if snapshot.position_seconds > 0.5 {
+                observed = snapshot.position_seconds;
+                break;
+            }
+        }
+
+        assert!(observed > 0.5, "playback position never advanced past 0.5s");
+        Ok(())
+    }
+
+    #[test]
     #[ignore = "requires mpv on PATH"]
     fn mpv_process_exposes_a_live_json_ipc_connection() -> Result<(), PlaybackError> {
         let mut engine = MpvEngine::new(None);
@@ -607,6 +703,70 @@ mod tests {
         assert_eq!(
             commands[2],
             json!(["loadfile", "https://example.test/watch?v=abc", "replace"])
+        );
+    }
+
+    #[test]
+    fn a_failed_load_reports_why_rather_than_mpvs_generic_message() {
+        let mut snapshot = PlaybackSnapshot::default();
+
+        // Ordering observed from a real mpv: ytdl_hook logs the cause, then
+        // end-file and cplayer both restate it as "unrecognized file format".
+        apply_mpv_message(&mut snapshot, &json!({"event": "start-file"}));
+        apply_mpv_message(
+            &mut snapshot,
+            &json!({
+                "event": "log-message", "level": "error", "prefix": "ytdl_hook",
+                "text": "ERROR: [youtube] abc: Sign in to confirm you're not a bot.\n"
+            }),
+        );
+        apply_mpv_message(
+            &mut snapshot,
+            &json!({
+                "event": "log-message", "level": "error", "prefix": "ytdl_hook",
+                "text": "youtube-dl failed: unexpected error occurred\n"
+            }),
+        );
+        apply_mpv_message(
+            &mut snapshot,
+            &json!({
+                "event": "end-file", "reason": "error",
+                "file_error": "unrecognized file format"
+            }),
+        );
+
+        let reported = snapshot.last_error.unwrap_or_default();
+        assert!(reported.contains("Sign in to confirm"), "got: {reported}");
+        assert!(!reported.contains("unrecognized file format"));
+    }
+
+    #[test]
+    fn log_messages_never_put_a_signed_stream_url_on_screen() {
+        let mut snapshot = PlaybackSnapshot::default();
+
+        apply_mpv_message(
+            &mut snapshot,
+            &json!({
+                "event": "log-message", "level": "error", "prefix": "ffmpeg",
+                "text": "Failed to open https://rr3.googlevideo.com/videoplayback?sig=SECRET now"
+            }),
+        );
+
+        let reported = snapshot.last_error.unwrap_or_default();
+        assert_eq!(reported, "Failed to open <url> now");
+        assert!(!reported.contains("SECRET"));
+        assert!(!reported.contains("googlevideo"));
+    }
+
+    #[test]
+    fn error_log_messages_are_requested_before_playback_starts() {
+        let commands = subscription_commands();
+
+        assert_eq!(commands[0], json!(["request_log_messages", "error"]));
+        assert!(
+            commands
+                .iter()
+                .any(|command| { command == &json!(["observe_property", 1, "time-pos"]) })
         );
     }
 

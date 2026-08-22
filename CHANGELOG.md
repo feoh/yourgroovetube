@@ -4,6 +4,18 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+- Report why a video failed to load instead of mpv's generic
+  `unrecognized file format`. Error-level mpv log messages are now requested
+  over the same IPC connection, and the first error of a load attempt wins, so
+  the yt-dlp reason survives the generic message that mpv sends afterwards.
+  Stream URLs are redacted so a signed playback URL cannot reach the status line.
+- Document what current YouTube extraction requires, since a missing JavaScript
+  runtime or missing `yt-dlp-ejs` challenge solvers both surface as a
+  `[stopped]` track, often reported by YouTube as a bot check rather than as the
+  underlying runtime problem.
+- Note that `cookies_from_browser` needs an explicit profile when the YouTube
+  login is not in the browser's `profiles.ini` default profile.
+
 ## 0.1.2 - 2026-08-21
 
 - Fix playback that reported itself as playing but stayed frozen at `0:00` with

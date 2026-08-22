@@ -149,6 +149,42 @@ This is deliberately opt-in and unset by default:
 A dedicated browser profile used only by `yourgroovetube` avoids disturbing a
 primary login. Confirm the resolved setting with `yourgroovetube doctor`.
 
+Name the profile explicitly when the login does not live in the browser's
+default profile, because `yt-dlp` otherwise reads whichever profile
+`profiles.ini` marks as default:
+
+```toml
+cookies_from_browser = "firefox:/home/you/.mozilla/firefox/ZK6htinr.Profile 1"
+```
+
+## Troubleshooting playback
+
+A track that reports `[stopped]` means `mpv` could not resolve the video, not
+that the file is broken. The status line names the underlying reason, which
+`yourgroovetube` reads from mpv's error log over IPC; `mpv` itself reduces every
+resolution failure to `unrecognized file format`. Reproduce it directly with:
+
+```console
+yt-dlp -v --simulate --print title -- 'https://www.youtube.com/watch?v=VIDEO_ID'
+```
+
+Current YouTube extraction needs a working JavaScript runtime to solve player
+challenges, and both halves must be present:
+
+1. **The runtime itself.** Only `deno` is enabled by default, so a machine with
+   `node` instead needs `--js-runtimes node`. Putting that in
+   `~/.config/yt-dlp/config` covers playback and Plex saving at once, since both
+   go through `yt-dlp`. Without it, `yt-dlp` warns
+   `No supported JavaScript runtime could be found`.
+2. **The challenge solver scripts**, from the `yt-dlp-ejs` package
+   (`uv tool install yt-dlp --with yt-dlp-ejs`). Without them, `yt-dlp` reports
+   `n challenge solving failed` and then `No video formats found!`.
+
+A `Sign in to confirm you're not a bot` error is usually a *symptom* of the
+above rather than a genuine need to authenticate: YouTube gates clients that
+cannot answer its challenges, and no anonymous player client avoids it. Fix the
+runtime first and re-test before reaching for `cookies_from_browser`.
+
 ## Planned keybindings
 
 | Key | Action |
