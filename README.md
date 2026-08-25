@@ -40,7 +40,8 @@ The application already includes:
 - automatic Kitty, iTerm2, Sixel, or Unicode half-block thumbnails;
 - audio mode that keeps the current video's thumbnail visible while `vid=no`;
 - public/unlisted playlist loading with pagination, automatic queue advancement,
-  and manual previous/next controls;
+  manual previous/next controls, and shuffle playback;
+- an in-app saved-playlist library persisted in the platform configuration file;
 - asynchronous, explicit yt-dlp saving into the configured Plex library;
 - keyboard/search state and a responsive Ratatui layout;
 - a live now-playing progress gauge;
@@ -125,6 +126,11 @@ results_per_page = 25
 
 [plex]
 library_dir = "/nas/video/Saved Youtube Videos"
+
+# These are normally added from the in-app playlist library.
+[[playlists]]
+name = "Focus music"
+playlist_id = "PL1234567890"
 ```
 
 Do not commit API keys, tokens, cookies, or captured YouTube responses.
@@ -192,14 +198,28 @@ runtime first and re-test before reaching for `cookies_from_browser`.
 | `/` | Open title/tag search (`Enter` submits, `Esc` cancels) |
 | `j`/`k` or arrows | Select a video |
 | `n` | Load the next result or playlist page |
-| `P` | Open a public/unlisted playlist URL or ID |
+| `P` | Open saved playlists (`a` add, `d` delete, `o` one-off URL/ID) |
 | `[` / `]` | Play the previous/next loaded playlist video |
+| `r` | Toggle shuffle for loaded playlist videos |
 | `Enter` or `p` | Play the selected video |
 | `m` | Toggle video / audio-with-thumbnail mode |
 | `Space` | Pause or resume |
 | `s` | Save the current video to the Plex directory |
 | `?` | Show keyboard help |
 | `q` | Quit |
+
+Saved playlists are stored in the same platform-standard `config.toml` as the
+other settings. Press `P`, then `a`, enter a display name, and paste the
+playlist URL or ID once. Future sessions can open it directly from the `P`
+library with `j`/`k` and `Enter`. Playlist names are unique without regard to
+ASCII case, so adding the same name again updates it. Press `o` in the library
+to load a playlist without saving it.
+
+Shuffle applies to the playlist videos currently loaded in the TUI. It starts
+with the selected video, visits every other loaded video once in randomized
+order, and then stops. Use `n` to load additional playlist pages; pages loaded
+while shuffled playback is active are randomized and appended without
+reordering tracks already visited.
 
 ## Implementation ranking
 

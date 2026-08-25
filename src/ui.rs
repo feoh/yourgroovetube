@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
-use crate::app::{Action, App};
+use crate::app::{Action, App, PlaylistDialog};
 use crate::artwork::ArtworkState;
 use crate::models::PlaybackMode;
 
@@ -55,22 +55,38 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, artwork: Option<&mut ArtworkState>
             &app.search_query,
         );
     }
-    if app.playlist_active {
-        render_input(
+    match app.playlist_dialog {
+        PlaylistDialog::Closed => {}
+        PlaylistDialog::Library => {
+            render_playlist_library(frame, centered_rect(70, 14, frame.area()), app);
+        }
+        PlaylistDialog::OneOff => render_input(
             frame,
             centered_rect(70, 5, frame.area()),
-            " Open playlist URL or ID ",
+            " Open playlist URL or ID · Esc to go back ",
             &app.playlist_query,
-        );
+        ),
+        PlaylistDialog::AddName => render_input(
+            frame,
+            centered_rect(70, 5, frame.area()),
+            " Name this playlist (1 of 2) · Enter to continue · Esc to cancel ",
+            &app.playlist_query,
+        ),
+        PlaylistDialog::AddValue => render_input(
+            frame,
+            centered_rect(70, 5, frame.area()),
+            " Playlist URL or ID (2 of 2) · Enter to save · Esc to cancel ",
+            &app.playlist_query,
+        ),
     }
     if app.help_visible {
-        render_help(frame, centered_rect(60, 15, frame.area()));
+        render_help(frame, centered_rect(60, 16, frame.area()));
     }
 }
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let controls = if area.width >= 100 {
-        "  / search  P playlist  n more  [/] track  m mode  Space pause  s save  ? help  q quit"
+        "  / search  P playlists  n more  [/] track  r shuffle  m mode  Space pause  s save  ? help  q quit"
     } else {
         "  / search  ? help  q quit"
     };
@@ -84,7 +100,15 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ),
         Span::raw(controls),
     ]);
-    let mode = format!("mode: {} ", app.playback.mode.label());
+    let mode = format!(
+        "mode: {}{} ",
+        app.playback.mode.label(),
+        if app.shuffle_enabled {
+            " · shuffle"
+        } else {
+            ""
+        }
+    );
     let header = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -225,6 +249,45 @@ fn render_player(frame: &mut Frame<'_>, area: Rect, app: &App) {
     frame.render_widget(gauge, area);
 }
 
+fn render_playlist_library(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .title(" Saved playlists ")
+        .borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(2)])
+        .split(inner);
+    let items = if app.saved_playlists.is_empty() {
+        vec![ListItem::new("No saved playlists yet. Press a to add one.")]
+    } else {
+        app.saved_playlists
+            .iter()
+            .map(|playlist| ListItem::new(playlist.name.as_str()))
+            .collect()
+    };
+    let list = List::new(items)
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+    let mut state = ListState::default();
+    if !app.saved_playlists.is_empty() {
+        state.select(Some(app.saved_playlist_selected));
+    }
+    frame.render_stateful_widget(list, sections[0], &mut state);
+    frame.render_widget(
+        Paragraph::new("Enter open · a add · d delete\no one-off URL · Esc close")
+            .style(Style::default().fg(Color::DarkGray)),
+        sections[1],
+    );
+}
+
 fn render_input(frame: &mut Frame<'_>, area: Rect, title: &str, value: &str) {
     frame.render_widget(Clear, area);
     frame.render_widget(
@@ -244,8 +307,9 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
              Esc     Cancel text input\n\
              j/k     Move through videos\n\
              n       Load the next result page\n\
-             P       Open a YouTube playlist URL or ID\n\
+             P       Open saved playlists (a add, d delete, o one-off)\n\
              [ / ]   Previous / next playlist video\n\
+             r       Toggle shuffle for loaded playlist videos\n\
              m       Toggle video / audio + thumbnail\n\
              Space   Pause or resume\n\
              s       Save current video to Plex directory\n\
@@ -371,6 +435,59 @@ mod tests {
         assert_eq!(action, Action::Search("synthwave".to_owned()));
         assert!(!app.search_active);
         assert!(!terminal.backend().to_string().contains("Enter to submit"));
+    }
+
+    #[test]
+    fn playlist_key_opens_the_saved_library_with_management_controls() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(never) => match never {},
+        };
+        let mut app = App::with_saved_playlists(vec![crate::models::SavedPlaylist {
+            name: "Focus music".to_owned(),
+            playlist_id: "PL1234567890".to_owned(),
+        }]);
+
+        let action =
+            dispatch_test_event(&mut terminal, &mut app, KeyEvent::from(KeyCode::Char('P')));
+        let rendered = terminal.backend().to_string();
+
+        assert_eq!(action, Action::None);
+        assert!(rendered.contains("Saved playlists"));
+        assert!(rendered.contains("Focus music"));
+        assert!(rendered.contains("a add"));
+        assert!(rendered.contains("o one-off URL"));
+    }
+
+    #[test]
+    fn add_prompts_show_their_step_and_survive_the_dialog_width() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(never) => match never {},
+        };
+        let mut app = App::new();
+
+        dispatch_test_event(&mut terminal, &mut app, KeyEvent::from(KeyCode::Char('P')));
+        dispatch_test_event(&mut terminal, &mut app, KeyEvent::from(KeyCode::Char('a')));
+        let rendered = terminal.backend().to_string();
+
+        assert!(rendered.contains("Name this playlist (1 of 2)"));
+        assert!(rendered.contains("Esc to cancel"));
+
+        for character in "Focus".chars() {
+            dispatch_test_event(
+                &mut terminal,
+                &mut app,
+                KeyEvent::from(KeyCode::Char(character)),
+            );
+        }
+        dispatch_test_event(&mut terminal, &mut app, KeyEvent::from(KeyCode::Enter));
+        let rendered = terminal.backend().to_string();
+
+        assert!(rendered.contains("Playlist URL or ID (2 of 2)"));
+        assert!(rendered.contains("Esc to cancel"));
     }
 
     #[test]

@@ -7,6 +7,8 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::models::SavedPlaylist;
+
 const API_KEY_ENV: &str = "YOURGROOVETUBE_YOUTUBE_API_KEY";
 
 #[derive(Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -15,6 +17,8 @@ pub struct AppConfig {
     pub youtube: YoutubeConfig,
     #[serde(default)]
     pub plex: PlexConfig,
+    #[serde(default)]
+    pub playlists: Vec<SavedPlaylist>,
 }
 
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -194,6 +198,10 @@ mod tests {
                 cookies_from_browser: Some("firefox".to_owned()),
             },
             plex: PlexConfig::default(),
+            playlists: vec![SavedPlaylist {
+                name: "Focus".to_owned(),
+                playlist_id: "PL1234567890".to_owned(),
+            }],
         };
 
         let Ok(encoded) = toml::to_string(&config) else {
@@ -204,6 +212,15 @@ mod tests {
         };
 
         assert!(decoded == config);
+    }
+
+    #[test]
+    fn existing_configs_default_to_an_empty_playlist_library() {
+        let Ok(config) = toml::from_str::<AppConfig>("[youtube]\nregion_code = \"US\"\n") else {
+            panic!("legacy config should parse");
+        };
+
+        assert!(config.playlists.is_empty());
     }
 
     #[test]
@@ -238,6 +255,7 @@ mod tests {
                 ..YoutubeConfig::default()
             },
             plex: PlexConfig::default(),
+            playlists: Vec::new(),
         };
 
         if let Err(error) = config.save_to(&path) {

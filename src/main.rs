@@ -5,11 +5,11 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use crossterm::event;
-use yourgroovetube::app::{Action, App};
+use yourgroovetube::app::{Action, App, PlaylistDialog};
 use yourgroovetube::artwork::ArtworkState;
 use yourgroovetube::config::{AppConfig, config_path};
 use yourgroovetube::download::{SaveError, VideoSaver, YoutubeSaver};
-use yourgroovetube::models::PlaybackMode;
+use yourgroovetube::models::{PlaybackMode, SavedPlaylist};
 use yourgroovetube::playback::{MpvEngine, PlaybackEngine, PlaybackError};
 use yourgroovetube::provider::{CatalogPage, SearchQuery, VideoCatalog};
 use yourgroovetube::ui;
@@ -129,7 +129,7 @@ async fn run_app(no_images: bool) -> Result<()> {
         Ok(())
     })
     .await?;
-    let mut app = App::new();
+    let mut app = App::with_saved_playlists(config.playlists.clone());
     app.replace_catalog_page(page, None);
 
     let mut artwork = if no_images {
@@ -155,6 +155,7 @@ async fn run_app(no_images: bool) -> Result<()> {
             &mut player,
             &mut artwork,
             &saver,
+            &mut config,
         )
         .await
     }
@@ -170,6 +171,7 @@ async fn run_event_loop(
     player: &mut MpvEngine,
     artwork: &mut ArtworkState,
     saver: &YoutubeSaver,
+    config: &mut AppConfig,
 ) -> Result<()> {
     let mut save_job: Option<SaveJob> = None;
     draw_ui(terminal, app, artwork)?;
@@ -203,17 +205,35 @@ async fn run_event_loop(
                     Err(error) => app.status = format!("Search failed: {error}"),
                 }
             }
-            Action::LoadPlaylist(value) => match parse_playlist_id(&value) {
+            Action::LoadPlaylist { value, label } => match parse_playlist_id(&value) {
                 Ok(playlist_id) => {
                     app.status = "Loading playlist…".to_owned();
                     draw_ui(terminal, app, artwork)?;
                     match catalog.playlist(&playlist_id, None).await {
-                        Ok(page) => app.replace_playlist_page(page, playlist_id),
+                        Ok(page) => app.replace_playlist_page(page, playlist_id, label),
                         Err(error) => app.status = format!("Could not load playlist: {error}"),
                     }
                 }
                 Err(error) => app.status = error.to_string(),
             },
+            Action::SavePlaylist { name, value } => {
+                app.status = match persist_saved_playlist(config, app, name.clone(), value.clone())
+                {
+                    Ok(message) => message,
+                    Err(error) => {
+                        app.playlist_pending_name = name;
+                        app.playlist_query = value;
+                        app.playlist_dialog = PlaylistDialog::AddValue;
+                        format!("Could not save playlist: {error}")
+                    }
+                };
+            }
+            Action::DeleteSavedPlaylist(index) => {
+                app.status = match delete_saved_playlist(config, app, index) {
+                    Ok(message) => message,
+                    Err(error) => format!("Could not delete playlist: {error}"),
+                };
+            }
             Action::NextPage => {
                 let Some(page_token) = app.next_page_token.clone() else {
                     continue;
@@ -235,7 +255,7 @@ async fn run_event_loop(
                 }
             }
             Action::Play(video) => {
-                play_video(app, player, video);
+                play_video(app, player, video, true);
             }
             Action::SetMode(mode) => match player.set_mode(mode) {
                 Ok(()) => app.status = format!("Playback mode: {}", mode.label()),
@@ -288,6 +308,66 @@ async fn run_event_loop(
     Ok(())
 }
 
+fn persist_saved_playlist(
+    config: &mut AppConfig,
+    app: &mut App,
+    name: String,
+    value: String,
+) -> Result<String> {
+    let name = name.trim().to_owned();
+    if name.is_empty() {
+        bail!("playlist name must not be empty");
+    }
+    let playlist_id = parse_playlist_id(&value)?;
+    let playlist = SavedPlaylist {
+        name: name.clone(),
+        playlist_id,
+    };
+    let mut updated = config.clone();
+    let replaced = updated
+        .playlists
+        .iter()
+        .position(|saved| saved.name.eq_ignore_ascii_case(&name));
+    if let Some(index) = replaced {
+        updated.playlists[index] = playlist;
+    } else {
+        updated.playlists.push(playlist);
+    }
+    updated
+        .save()
+        .context("could not write the configuration file")?;
+    *config = updated;
+    app.set_saved_playlists(config.playlists.clone());
+    if let Some(index) = config
+        .playlists
+        .iter()
+        .position(|playlist| playlist.name.eq_ignore_ascii_case(&name))
+    {
+        app.saved_playlist_selected = index;
+    }
+    Ok(if replaced.is_some() {
+        format!("Updated saved playlist: {name}")
+    } else {
+        format!("Saved playlist: {name}")
+    })
+}
+
+fn delete_saved_playlist(config: &mut AppConfig, app: &mut App, index: usize) -> Result<String> {
+    let mut updated = config.clone();
+    let name = updated
+        .playlists
+        .get(index)
+        .map(|playlist| playlist.name.clone())
+        .context("saved playlist no longer exists")?;
+    updated.playlists.remove(index);
+    updated
+        .save()
+        .context("could not write the configuration file")?;
+    *config = updated;
+    app.set_saved_playlists(config.playlists.clone());
+    Ok(format!("Deleted saved playlist: {name}"))
+}
+
 async fn poll_save_job(app: &mut App, save_job: &mut Option<SaveJob>) {
     if !save_job.as_ref().is_some_and(|job| job.is_finished()) {
         return;
@@ -302,10 +382,17 @@ async fn poll_save_job(app: &mut App, save_job: &mut Option<SaveJob>) {
     };
 }
 
-fn play_video(app: &mut App, player: &mut MpvEngine, video: yourgroovetube::models::Video) -> bool {
+fn play_video(
+    app: &mut App,
+    player: &mut MpvEngine,
+    video: yourgroovetube::models::Video,
+    prepare_queue: bool,
+) -> bool {
     match player.play(&video, app.playback.mode) {
         Ok(()) => {
-            app.prepare_queue(&video);
+            if prepare_queue {
+                app.prepare_queue(&video);
+            }
             app.start_playback(video);
             app.status = "Playing through mpv".to_owned();
             true
@@ -320,7 +407,7 @@ fn play_video(app: &mut App, player: &mut MpvEngine, video: yourgroovetube::mode
 fn play_queue_relative(app: &mut App, player: &mut MpvEngine, delta: isize) {
     match app.queue_relative(delta) {
         Some(video) => {
-            play_video(app, player, video);
+            play_video(app, player, video, false);
         }
         None => app.status = "No playlist video in that direction".to_owned(),
     }
@@ -332,7 +419,7 @@ fn advance_finished_queue(app: &mut App, player: &mut MpvEngine) {
     }
     match app.finish_queue_item() {
         Some(video) => {
-            if !play_video(app, player, video) {
+            if !play_video(app, player, video, false) {
                 app.queue_index = None;
             }
         }
