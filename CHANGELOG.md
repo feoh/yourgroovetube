@@ -4,6 +4,19 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 0.2.0 - 2026-08-24
+
+- Add playlist shuffle mode for the currently loaded videos, preserving the
+  selected starting track and avoiding repeats through the queue.
+- Add an in-app saved-playlist library with named entries, one-off playlist
+  loading, and add/delete controls persisted to `config.toml`.
+- Say why an empty playlist prompt is refusing to advance instead of ignoring
+  the keypress. Submitting an empty name or URL produced no action, no message
+  and no visible change, which was indistinguishable from a frozen dialog and
+  left nothing saved. The add prompts are also numbered now, because the first
+  one asks for a name and typing a playlist URL there stranded the save on an
+  empty second step.
+
 ## 0.1.3 - 2026-08-22
 
 - Report why a video failed to load instead of mpv's generic
