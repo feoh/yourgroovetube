@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -8,14 +8,19 @@ use crossterm::event;
 use yourgroovetube::app::{Action, App, PlaylistDialog};
 use yourgroovetube::artwork::ArtworkState;
 use yourgroovetube::config::{AppConfig, config_path};
-use yourgroovetube::download::{SaveError, VideoSaver, YoutubeSaver};
+use yourgroovetube::download::{SaveError, SaveProgress, VideoSaver, YoutubeSaver};
 use yourgroovetube::models::{PlaybackMode, SavedPlaylist};
 use yourgroovetube::playback::{MpvEngine, PlaybackEngine, PlaybackError};
 use yourgroovetube::provider::{CatalogPage, SearchQuery, VideoCatalog};
 use yourgroovetube::ui;
 use yourgroovetube::youtube::{YoutubeCatalog, parse_playlist_id};
 
-type SaveJob = tokio::task::JoinHandle<Result<PathBuf, SaveError>>;
+struct SaveJob {
+    task: tokio::task::JoinHandle<Result<PathBuf, SaveError>>,
+    progress: tokio::sync::mpsc::UnboundedReceiver<SaveProgress>,
+    latest_progress: SaveProgress,
+    started_at: Instant,
+}
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -286,7 +291,16 @@ async fn run_event_loop(
             Action::SaveToPlex => match app.playback.current.clone() {
                 Some(video) => {
                     let saver = saver.clone();
-                    save_job = Some(tokio::spawn(async move { saver.save(&video).await }));
+                    let (progress_sender, progress) = tokio::sync::mpsc::unbounded_channel();
+                    let task = tokio::spawn(async move {
+                        saver.save_with_progress(&video, progress_sender).await
+                    });
+                    save_job = Some(SaveJob {
+                        task,
+                        progress,
+                        latest_progress: SaveProgress::Preparing,
+                        started_at: Instant::now(),
+                    });
                     app.status = "Saving current video for Plex…".to_owned();
                 }
                 None => app.status = "Nothing is playing".to_owned(),
@@ -302,7 +316,7 @@ async fn run_event_loop(
     }
 
     if let Some(job) = save_job {
-        job.abort();
+        job.task.abort();
     }
     let _ = player.stop();
     Ok(())
@@ -369,17 +383,40 @@ fn delete_saved_playlist(config: &mut AppConfig, app: &mut App, index: usize) ->
 }
 
 async fn poll_save_job(app: &mut App, save_job: &mut Option<SaveJob>) {
-    if !save_job.as_ref().is_some_and(|job| job.is_finished()) {
+    let Some(job) = save_job.as_mut() else {
+        return;
+    };
+    while let Ok(progress) = job.progress.try_recv() {
+        job.latest_progress = progress;
+    }
+    if !job.task.is_finished() {
+        app.status = running_save_status(job);
         return;
     }
     let Some(job) = save_job.take() else {
         return;
     };
-    app.status = match job.await {
-        Ok(Ok(path)) => format!("Saved for Plex: {}", path.display()),
-        Ok(Err(error)) => format!("Could not save for Plex: {error}"),
-        Err(error) => format!("Plex save task failed: {error}"),
+    app.status = match job.task.await {
+        Ok(Ok(path)) => format!("✓ Saved for Plex: {}", path.display()),
+        Ok(Err(error)) => format!("✗ Could not save for Plex: {error}"),
+        Err(error) => format!("✗ Plex save task failed: {error}"),
     };
+}
+
+fn running_save_status(job: &SaveJob) -> String {
+    const SPINNER: [&str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
+    let elapsed = job.started_at.elapsed();
+    let spinner = SPINNER[(elapsed.as_millis() / 100) as usize % SPINNER.len()];
+    let phase = match &job.latest_progress {
+        SaveProgress::Preparing => "preparing".to_owned(),
+        SaveProgress::Downloading(percent) => format!("downloading {percent}"),
+        SaveProgress::Finalizing => "finalizing".to_owned(),
+    };
+    format!(
+        "{spinner} Saving for Plex · {phase} · {}:{:02}",
+        elapsed.as_secs() / 60,
+        elapsed.as_secs() % 60
+    )
 }
 
 fn play_video(

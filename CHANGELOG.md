@@ -4,6 +4,12 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+- Show live save-to-Plex progress with an animated elapsed timer and yt-dlp
+  download percentage, then mark completion or failure explicitly. Failed saves
+  now include yt-dlp's redacted diagnostic instead of only its exit code.
+- Render the bottom status line in a bold, high-contrast color scheme so status
+  changes are easy to notice.
+
 ## 0.2.0 - 2026-08-24
 
 - Add playlist shuffle mode for the currently loaded videos, preserving the

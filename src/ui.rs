@@ -43,7 +43,12 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, artwork: Option<&mut ArtworkState>
     render_browser(frame, sections[1], app, artwork);
     render_player(frame, sections[2], app);
     frame.render_widget(
-        Paragraph::new(app.status.as_str()).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(app.status.as_str()).style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         sections[3],
     );
 
@@ -392,6 +397,25 @@ mod tests {
         assert!(rendered.contains("yourgroovetube"));
         assert!(rendered.contains("audio + thumbnail") || rendered.contains("mode: video"));
         assert!(rendered.contains("Press / to search YouTube"));
+    }
+
+    #[test]
+    fn status_line_uses_a_high_contrast_bold_style() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(never) => match never {},
+        };
+        let app = App::new();
+
+        draw_test_app(&mut terminal, &app);
+        let Some(cell) = terminal.backend().buffer().cell((0, 23)) else {
+            panic!("status cell should exist");
+        };
+
+        assert_eq!(cell.fg, Color::Black);
+        assert_eq!(cell.bg, Color::Yellow);
+        assert!(cell.modifier.contains(Modifier::BOLD));
     }
 
     #[test]

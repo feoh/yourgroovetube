@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -6,11 +7,22 @@ use std::process::Stdio;
 
 use thiserror::Error;
 use tokio::fs;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::mpsc;
 
 use crate::models::Video;
 
 pub type SaveFuture<'a> = Pin<Box<dyn Future<Output = Result<PathBuf, SaveError>> + Send + 'a>>;
+
+const PROGRESS_PREFIX: &str = "yourgroovetube-progress:";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SaveProgress {
+    Preparing,
+    Downloading(String),
+    Finalizing,
+}
 
 #[derive(Debug, Error)]
 pub enum SaveError {
@@ -18,8 +30,10 @@ pub enum SaveError {
     Destination(String),
     #[error("yt-dlp could not be started: {0}")]
     Start(String),
-    #[error("yt-dlp download failed with exit status {0}")]
-    Download(String),
+    #[error("yt-dlp download failed with exit status {status}: {message}")]
+    Download { status: String, message: String },
+    #[error("could not read yt-dlp output: {0}")]
+    Output(String),
     #[error("yt-dlp did not report a completed output file")]
     MissingOutput,
     #[error("yt-dlp reported an output outside the private staging directory")]
@@ -45,7 +59,12 @@ impl YoutubeSaver {
         }
     }
 
-    async fn save_inner(&self, video: &Video) -> Result<PathBuf, SaveError> {
+    async fn save_inner(
+        &self,
+        video: &Video,
+        progress: Option<mpsc::UnboundedSender<SaveProgress>>,
+    ) -> Result<PathBuf, SaveError> {
+        send_progress(&progress, SaveProgress::Preparing);
         fs::create_dir_all(&self.library_directory)
             .await
             .map_err(|error| SaveError::Destination(error.to_string()))?;
@@ -65,25 +84,51 @@ impl YoutubeSaver {
 
         let base_name = safe_video_name(video);
         let output_template = staging.join(format!("{base_name}.%(ext)s"));
-        let output = Command::new("yt-dlp")
+        let mut child = Command::new("yt-dlp")
             .args(download_arguments(
                 &output_template,
                 &video.watch_url(),
                 self.cookies_from_browser.as_deref(),
             ))
             .stdin(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .output()
-            .await
+            .spawn()
             .map_err(|error| SaveError::Start(error.to_string()))?;
-        if !output.status.success() {
-            return Err(SaveError::Download(output.status.code().map_or_else(
-                || "terminated by signal".to_owned(),
-                |code| code.to_string(),
-            )));
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| SaveError::Output("yt-dlp stdout was not available".to_owned()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| SaveError::Output("yt-dlp stderr was not available".to_owned()))?;
+        let (status, stdout, diagnostics) = tokio::join!(
+            child.wait(),
+            read_stdout(stdout),
+            read_stderr(stderr, progress.clone()),
+        );
+        let status = status.map_err(|error| SaveError::Output(error.to_string()))?;
+        let stdout = stdout.map_err(|error| SaveError::Output(error.to_string()))?;
+        let diagnostics = diagnostics.map_err(|error| SaveError::Output(error.to_string()))?;
+        if !status.success() {
+            return Err(SaveError::Download {
+                status: status.code().map_or_else(
+                    || "terminated by signal".to_owned(),
+                    |code| code.to_string(),
+                ),
+                message: diagnostics
+                    .iter()
+                    .rev()
+                    .find(|line| line.contains("ERROR:"))
+                    .or_else(|| diagnostics.back())
+                    .cloned()
+                    .unwrap_or_else(|| "no diagnostic was reported".to_owned()),
+            });
         }
-        let output_path = String::from_utf8_lossy(&output.stdout)
+        send_progress(&progress, SaveProgress::Finalizing);
+        let output_path = String::from_utf8_lossy(&stdout)
             .lines()
             .rev()
             .find(|line| !line.trim().is_empty())
@@ -116,12 +161,83 @@ impl YoutubeSaver {
 
 pub trait VideoSaver: Send + Sync {
     fn save<'a>(&'a self, video: &'a Video) -> SaveFuture<'a>;
+
+    fn save_with_progress<'a>(
+        &'a self,
+        video: &'a Video,
+        progress: mpsc::UnboundedSender<SaveProgress>,
+    ) -> SaveFuture<'a> {
+        drop(progress);
+        self.save(video)
+    }
 }
 
 impl VideoSaver for YoutubeSaver {
     fn save<'a>(&'a self, video: &'a Video) -> SaveFuture<'a> {
-        Box::pin(self.save_inner(video))
+        Box::pin(self.save_inner(video, None))
     }
+
+    fn save_with_progress<'a>(
+        &'a self,
+        video: &'a Video,
+        progress: mpsc::UnboundedSender<SaveProgress>,
+    ) -> SaveFuture<'a> {
+        Box::pin(self.save_inner(video, Some(progress)))
+    }
+}
+
+fn send_progress(sender: &Option<mpsc::UnboundedSender<SaveProgress>>, progress: SaveProgress) {
+    if let Some(sender) = sender {
+        let _ = sender.send(progress);
+    }
+}
+
+async fn read_stdout(reader: impl AsyncRead + Unpin) -> std::io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    let mut reader = BufReader::new(reader);
+    reader.read_to_end(&mut output).await?;
+    Ok(output)
+}
+
+async fn read_stderr(
+    reader: impl AsyncRead + Unpin,
+    progress: Option<mpsc::UnboundedSender<SaveProgress>>,
+) -> std::io::Result<VecDeque<String>> {
+    let mut diagnostics = VecDeque::with_capacity(8);
+    let mut lines = BufReader::new(reader).lines();
+    while let Some(line) = lines.next_line().await? {
+        if let Some(percent) = parse_progress(&line) {
+            send_progress(&progress, SaveProgress::Downloading(percent));
+        } else if line.contains("ERROR:") || line.contains("WARNING:") {
+            if diagnostics.len() == 8 {
+                diagnostics.pop_front();
+            }
+            diagnostics.push_back(redact_urls(&line));
+        }
+    }
+    Ok(diagnostics)
+}
+
+fn parse_progress(line: &str) -> Option<String> {
+    let value = line.trim().strip_prefix(PROGRESS_PREFIX)?.trim();
+    let percent = value.strip_suffix('%')?.trim().parse::<f64>().ok()?;
+    if !percent.is_finite() || !(0.0..=100.0).contains(&percent) {
+        return None;
+    }
+    Some(format!("{percent:.1}%"))
+}
+
+fn redact_urls(text: &str) -> String {
+    text.split_whitespace()
+        .map(|word| {
+            if word.contains("http://") || word.contains("https://") {
+                "[URL]"
+            } else {
+                word
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn download_arguments(
@@ -131,7 +247,9 @@ fn download_arguments(
 ) -> Vec<OsString> {
     let mut arguments: Vec<OsString> = [
         "--no-playlist",
-        "--no-progress",
+        "--newline",
+        "--progress-template",
+        "download:yourgroovetube-progress:%(progress._percent_str)s",
         "--format",
         "bestvideo*+bestaudio/best",
         "--merge-output-format",
@@ -198,6 +316,27 @@ mod tests {
         assert_eq!(name, "_100__ great_ _video_ [abc123]");
         assert!(!name.contains('%'));
         assert!(!name.contains('/'));
+    }
+
+    #[test]
+    fn progress_lines_are_parsed_without_exposing_arbitrary_output() {
+        assert_eq!(
+            parse_progress("yourgroovetube-progress:  42.5%"),
+            Some("42.5%".to_owned())
+        );
+        assert_eq!(
+            parse_progress("[download] https://signed.example/video"),
+            None
+        );
+        assert_eq!(parse_progress("yourgroovetube-progress: unknown"), None);
+    }
+
+    #[test]
+    fn diagnostics_redact_urls_before_they_can_reach_the_status_line() {
+        assert_eq!(
+            redact_urls("ERROR: failed https://signed.example/video?token=secret now"),
+            "ERROR: failed [URL] now"
+        );
     }
 
     #[test]
