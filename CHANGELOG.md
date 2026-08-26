@@ -4,6 +4,8 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 0.2.1 - 2026-08-26
+
 - Show live save-to-Plex progress with an animated elapsed timer and yt-dlp
   download percentage, then mark completion or failure explicitly. Failed saves
   now include yt-dlp's redacted diagnostic instead of only its exit code.
