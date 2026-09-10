@@ -4,6 +4,10 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+- Clarify that browser cookies are opt-in, but YouTube may consistently block
+  anonymous playback. Explain how to reuse a working yt-dlp browser/profile
+  setting in the app, and avoid attributing every bot check to JavaScript setup.
+
 ## 0.2.1 - 2026-08-26
 
 - Show live save-to-Plex progress with an animated elapsed timer and yt-dlp

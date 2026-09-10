@@ -121,7 +121,7 @@ Alternatively, create or edit the file printed by `yourgroovetube config path`:
 api_key = "your-key"
 region_code = "US"
 results_per_page = 25
-# Optional; unset means anonymous extraction.
+# Opt-in; unset means anonymous extraction, which YouTube may block.
 # cookies_from_browser = "firefox"
 
 [plex]
@@ -137,12 +137,28 @@ Do not commit API keys, tokens, cookies, or captured YouTube responses.
 
 ### Optional cookie extraction
 
-Anonymous `yt-dlp` extraction occasionally trips a YouTube bot check, which
-surfaces as a `[stopped]` track and an `mpv:` error in the status line. Setting
-`cookies_from_browser` makes both playback and Plex saving reuse an existing
-browser login, accepting the value format that `yt-dlp --cookies-from-browser`
-documents (`BROWSER[+KEYRING][:PROFILE][::CONTAINER]`), for example `firefox`,
-`chrome:Profile 1`, or `brave`.
+**Optional means opt-in, not that playback without cookies is guaranteed.**
+By default, `yourgroovetube` does not request browser cookies. YouTube may reject
+anonymous extraction on your connection every time, not just occasionally. This
+surfaces as a `[stopped]` track and an `mpv:` error such as
+`Sign in to confirm you're not a bot` in the status line.
+
+Setting `youtube.cookies_from_browser` makes both playback and Plex saving reuse
+an existing browser login, accepting the value format that
+`yt-dlp --cookies-from-browser` documents
+(`BROWSER[+KEYRING][:PROFILE][::CONTAINER]`), for example `firefox`,
+`chrome:Profile 1`, or `vivaldi`. Cookies may help, but do not guarantee playback.
+
+A successful standalone `yt-dlp --cookies-from-browser vivaldi ...` command reads
+cookies for that invocation; it does **not** permanently log yt-dlp in or
+configure `yourgroovetube`. To use the same cookies in the app:
+
+1. Run `yourgroovetube config path` to locate the configuration file.
+2. Add `cookies_from_browser = "vivaldi"` inside the **existing `[youtube]`
+   section**, preserving your API key. Replace `vivaldi` with the exact
+   browser/profile value from your successful command.
+3. Restart the app. Run `yourgroovetube doctor` to confirm it reports
+   `yt-dlp cookies: from browser vivaldi` rather than `none (anonymous extraction)`.
 
 This is deliberately opt-in and unset by default:
 
@@ -186,10 +202,13 @@ challenges, and both halves must be present:
    (`uv tool install yt-dlp --with yt-dlp-ejs`). Without them, `yt-dlp` reports
    `n challenge solving failed` and then `No video formats found!`.
 
-A `Sign in to confirm you're not a bot` error is usually a *symptom* of the
-above rather than a genuine need to authenticate: YouTube gates clients that
-cannot answer its challenges, and no anonymous player client avoids it. Fix the
-runtime first and re-test before reaching for `cookies_from_browser`.
+A `Sign in to confirm you're not a bot` error alone does not distinguish a
+JavaScript challenge problem from YouTube rejecting anonymous access. Check the
+extractor's diagnostics for runtime or challenge-solver warnings and address
+those if present. If the same video works with `yt-dlp --cookies-from-browser`
+but fails in the app, configure the same browser/profile as described in
+[Optional cookie extraction](#optional-cookie-extraction); the app does not
+inherit the options from your earlier command.
 
 ## Planned keybindings
 
