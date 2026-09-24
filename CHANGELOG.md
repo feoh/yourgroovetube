@@ -4,6 +4,8 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 0.2.2 - 2026-09-24
+
 - Clarify that browser cookies are opt-in, but YouTube may consistently block
   anonymous playback. Explain how to reuse a working yt-dlp browser/profile
   setting in the app, and avoid attributing every bot check to JavaScript setup.
