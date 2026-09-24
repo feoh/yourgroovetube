@@ -7,6 +7,10 @@ All notable changes will be documented here.
 - Clarify that browser cookies are opt-in, but YouTube may consistently block
   anonymous playback. Explain how to reuse a working yt-dlp browser/profile
   setting in the app, and avoid attributing every bot check to JavaScript setup.
+- Queue search results like playlists: `[`/`]` step through loaded results,
+  playback advances automatically, and `r` shuffles them. Pages loaded with
+  `n` join the active queue, randomized when shuffle is on and in provider order
+  when it is off. The default popular feed stays browse-and-play only.
 
 ## 0.2.1 - 2026-08-26
 

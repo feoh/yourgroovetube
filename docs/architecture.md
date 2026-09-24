@@ -49,12 +49,15 @@ The UI refreshes the shared snapshot at ten frames per second.
 Video mode allows mpv to render normally. Audio mode sets `vid=no` and pins the
 currently playing video's thumbnail in the TUI. The renderer detects Kitty,
 iTerm2, and Sixel support through `ratatui-image`, with a Unicode half-block
-fallback and a `--no-images` override. Playlist playback builds a queue from
-hydrated playlist items, advances on mpv's EOF event, and supports manual
-previous/next controls. Shuffle randomizes the unplayed, currently loaded
-items while keeping the explicitly selected video first; later pages are
-randomized before being appended so already visited items do not move or
-repeat. Mode is a playback concern rather than a search or catalog concern.
+fallback and a `--no-images` override. Search-result and playlist playback
+build queues from hydrated catalog items, advance on mpv's EOF event, and
+support manual previous/next controls. The default popular feed remains a
+browse-and-play surface without queued playback.
+Shuffle randomizes the unplayed, currently loaded items while keeping the
+explicitly selected video first; later pages are randomized before being
+appended so already visited items do not move or repeat. With shuffle disabled,
+later pages retain provider order. Mode is a playback concern rather than a
+search or catalog concern.
 
 Named playlist IDs are persisted in the platform configuration file. The TUI
 owns the add/select/delete workflow, while playlist loading continues through

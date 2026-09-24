@@ -39,8 +39,8 @@ The application already includes:
 - observed playback position, duration, end state, and IPC errors;
 - automatic Kitty, iTerm2, Sixel, or Unicode half-block thumbnails;
 - audio mode that keeps the current video's thumbnail visible while `vid=no`;
-- public/unlisted playlist loading with pagination, automatic queue advancement,
-  manual previous/next controls, and shuffle playback;
+- search-result and public/unlisted playlist queues with pagination, automatic
+  advancement, manual previous/next controls, and shuffle playback;
 - an in-app saved-playlist library persisted in the platform configuration file;
 - asynchronous, explicit yt-dlp saving into the configured Plex library;
 - keyboard/search state and a responsive Ratatui layout;
@@ -218,8 +218,8 @@ inherit the options from your earlier command.
 | `j`/`k` or arrows | Select a video |
 | `n` | Load the next result or playlist page |
 | `P` | Open saved playlists (`a` add, `d` delete, `o` one-off URL/ID) |
-| `[` / `]` | Play the previous/next loaded playlist video |
-| `r` | Toggle shuffle for loaded playlist videos |
+| `[` / `]` | Play the previous/next queued video |
+| `r` | Toggle shuffle for loaded search or playlist videos |
 | `Enter` or `p` | Play the selected video |
 | `m` | Toggle video / audio-with-thumbnail mode |
 | `Space` | Pause or resume |
@@ -234,11 +234,13 @@ library with `j`/`k` and `Enter`. Playlist names are unique without regard to
 ASCII case, so adding the same name again updates it. Press `o` in the library
 to load a playlist without saving it.
 
-Shuffle applies to the playlist videos currently loaded in the TUI. It starts
-with the selected video, visits every other loaded video once in randomized
-order, and then stops. Use `n` to load additional playlist pages; pages loaded
-while shuffled playback is active are randomized and appended without
-reordering tracks already visited.
+Shuffle applies to search-result or playlist videos currently loaded in the
+TUI; it is not available on the default popular feed. It starts with the
+selected video, visits every other loaded video once in randomized order, and
+then stops. Use `n` to load additional search-result or playlist pages; pages
+loaded while queued playback is active are appended without reordering tracks
+already visited. A newly loaded page is randomized before appending when
+shuffle is on and retains provider order when shuffle is off.
 
 ## Implementation ranking
 

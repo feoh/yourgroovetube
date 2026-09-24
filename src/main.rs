@@ -446,7 +446,7 @@ fn play_queue_relative(app: &mut App, player: &mut MpvEngine, delta: isize) {
         Some(video) => {
             play_video(app, player, video, false);
         }
-        None => app.status = "No playlist video in that direction".to_owned(),
+        None => app.status = "No queued video in that direction".to_owned(),
     }
 }
 
@@ -460,7 +460,7 @@ fn advance_finished_queue(app: &mut App, player: &mut MpvEngine) {
                 app.queue_index = None;
             }
         }
-        None => app.status = "Playlist queue finished".to_owned(),
+        None => app.status = "Queue finished".to_owned(),
     }
 }
 

@@ -144,13 +144,17 @@ impl App {
         self.status = format!("Loaded {} playlist videos", self.videos.len());
     }
 
+    fn catalog_supports_queue(&self) -> bool {
+        self.active_search.is_some() || self.active_playlist.is_some()
+    }
+
     pub fn append_catalog_page(&mut self, page: CatalogPage) {
         let CatalogPage {
             videos,
             next_page_token,
         } = page;
         let added = videos.len();
-        if self.active_playlist.is_some() && !self.queue.is_empty() {
+        if self.catalog_supports_queue() && !self.queue.is_empty() {
             if self.shuffle_enabled {
                 let mut queued_videos = videos.clone();
                 queued_videos.shuffle(&mut rand::rng());
@@ -165,7 +169,7 @@ impl App {
     }
 
     pub fn prepare_queue(&mut self, video: &Video) {
-        if self.active_playlist.is_some() {
+        if self.catalog_supports_queue() {
             if self.shuffle_enabled {
                 let selected_index = self.videos.iter().position(|item| item.id == video.id);
                 let mut remaining = self
@@ -263,21 +267,26 @@ impl App {
                 Action::SetMode(self.playback.mode)
             }
             KeyCode::Char('n') if self.next_page_token.is_some() => Action::NextPage,
-            KeyCode::Char('r') if self.active_playlist.is_some() => {
+            KeyCode::Char('r') if self.catalog_supports_queue() => {
                 self.shuffle_enabled = !self.shuffle_enabled;
                 if let Some(video) = self.playback.current.clone()
                     && self.queue_index.is_some()
                 {
                     self.prepare_queue(&video);
                 }
+                let catalog_label = if self.active_search.is_some() {
+                    "Search result"
+                } else {
+                    "Playlist"
+                };
                 self.status = format!(
-                    "Playlist shuffle {} for loaded videos",
+                    "{catalog_label} shuffle {} for loaded videos",
                     if self.shuffle_enabled { "on" } else { "off" }
                 );
                 Action::None
             }
             KeyCode::Char('r') => {
-                self.status = "Shuffle is available while browsing a playlist".to_owned();
+                self.status = "Shuffle is available in search results or playlists".to_owned();
                 Action::None
             }
             KeyCode::Char(' ') => Action::TogglePause,
@@ -594,6 +603,33 @@ mod tests {
     }
 
     #[test]
+    fn search_result_shuffle_can_be_toggled() {
+        let mut app = App::new();
+        app.active_search = Some("jazz".to_owned());
+
+        assert_eq!(app.handle_key(key(KeyCode::Char('r'))), Action::None);
+
+        assert!(app.shuffle_enabled);
+        assert_eq!(
+            app.status,
+            "Search result shuffle on for loaded videos".to_owned()
+        );
+    }
+
+    #[test]
+    fn shuffle_remains_unavailable_on_the_default_feed() {
+        let mut app = App::new();
+
+        assert_eq!(app.handle_key(key(KeyCode::Char('r'))), Action::None);
+
+        assert!(!app.shuffle_enabled);
+        assert_eq!(
+            app.status,
+            "Shuffle is available in search results or playlists".to_owned()
+        );
+    }
+
+    #[test]
     fn playlist_queue_moves_in_order() {
         let mut app = App::new();
         app.active_playlist = Some("PL1234567890".to_owned());
@@ -626,6 +662,36 @@ mod tests {
     fn shuffle_queue_starts_with_the_selected_video_without_duplicates() {
         let mut app = App::new();
         app.active_playlist = Some("PL1234567890".to_owned());
+        app.shuffle_enabled = true;
+        app.videos = ["first", "second", "third", "fourth"]
+            .into_iter()
+            .map(|id| Video {
+                id: id.to_owned(),
+                ..Video::default()
+            })
+            .collect();
+        let selected = app.videos[2].clone();
+
+        app.prepare_queue(&selected);
+
+        assert_eq!(
+            app.queue.first().map(|video| video.id.as_str()),
+            Some("third")
+        );
+        let mut ids = app
+            .queue
+            .iter()
+            .map(|video| video.id.as_str())
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["first", "fourth", "second", "third"]);
+        assert_eq!(app.queue_index, Some(0));
+    }
+
+    #[test]
+    fn shuffled_search_queue_starts_with_the_selected_video_without_duplicates() {
+        let mut app = App::new();
+        app.active_search = Some("jazz".to_owned());
         app.shuffle_enabled = true;
         app.videos = ["first", "second", "third", "fourth"]
             .into_iter()
@@ -692,6 +758,83 @@ mod tests {
             .collect::<Vec<_>>();
         queued_ids.sort_unstable();
         assert_eq!(queued_ids, vec!["first", "fourth", "second", "third"]);
+    }
+
+    #[test]
+    fn shuffled_search_page_append_preserves_the_browser_order() {
+        let mut app = App::new();
+        app.active_search = Some("jazz".to_owned());
+        app.shuffle_enabled = true;
+        app.videos = ["first", "second"]
+            .into_iter()
+            .map(|id| Video {
+                id: id.to_owned(),
+                ..Video::default()
+            })
+            .collect();
+        let first = app.videos[0].clone();
+        app.prepare_queue(&first);
+
+        app.append_catalog_page(CatalogPage {
+            videos: ["third", "fourth"]
+                .into_iter()
+                .map(|id| Video {
+                    id: id.to_owned(),
+                    ..Video::default()
+                })
+                .collect(),
+            next_page_token: None,
+        });
+
+        assert_eq!(
+            app.videos
+                .iter()
+                .map(|video| video.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "second", "third", "fourth"]
+        );
+        let mut queued_ids = app
+            .queue
+            .iter()
+            .map(|video| video.id.as_str())
+            .collect::<Vec<_>>();
+        queued_ids.sort_unstable();
+        assert_eq!(queued_ids, vec!["first", "fourth", "second", "third"]);
+    }
+
+    #[test]
+    fn ordered_search_page_append_extends_the_queue_in_provider_order() {
+        let mut app = App::new();
+        app.active_search = Some("jazz".to_owned());
+        app.videos = ["first", "second"]
+            .into_iter()
+            .map(|id| Video {
+                id: id.to_owned(),
+                ..Video::default()
+            })
+            .collect();
+        let second = app.videos[1].clone();
+        app.prepare_queue(&second);
+
+        app.append_catalog_page(CatalogPage {
+            videos: ["third", "fourth"]
+                .into_iter()
+                .map(|id| Video {
+                    id: id.to_owned(),
+                    ..Video::default()
+                })
+                .collect(),
+            next_page_token: None,
+        });
+
+        assert_eq!(
+            app.queue
+                .iter()
+                .map(|video| video.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "second", "third", "fourth"]
+        );
+        assert_eq!(app.queue_index, Some(1));
     }
 
     #[test]

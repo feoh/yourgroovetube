@@ -91,7 +91,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, artwork: Option<&mut ArtworkState>
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let controls = if area.width >= 100 {
-        "  / search  P playlists  n more  [/] track  r shuffle  m mode  Space pause  s save  ? help  q quit"
+        "  / search  P playlists  n more  [/] queued  r shuffle  m mode  Space pause  s save  ? help  q quit"
     } else {
         "  / search  ? help  q quit"
     };
@@ -313,8 +313,8 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
              j/k     Move through videos\n\
              n       Load the next result page\n\
              P       Open saved playlists (a add, d delete, o one-off)\n\
-             [ / ]   Previous / next playlist video\n\
-             r       Toggle shuffle for loaded playlist videos\n\
+             [ / ]   Previous / next queued video\n\
+             r       Toggle shuffle for loaded search or playlist videos\n\
              m       Toggle video / audio + thumbnail\n\
              Space   Pause or resume\n\
              s       Save current video to Plex directory\n\
