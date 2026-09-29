@@ -235,12 +235,15 @@ ASCII case, so adding the same name again updates it. Press `o` in the library
 to load a playlist without saving it.
 
 To shuffle a search or playlist, first load it with `/` or `P`, then press
-`r` (look for `shuffle` in the header). Select a video and press `Enter` to
-start playback. That video plays first; the following videos play in shuffled
-order automatically or when you press `]`. Press `[` to go back through the
-playback queue. The visible results stay in their original order so you can
-still browse them. Pressing `r` on the initial popular feed does not turn on
-shuffle or carry it over to a later search.
+`r` (look for `shuffle` in the header). If you have not chosen a video with
+`j`/`k`, shuffle highlights a random starting video instead of always starting
+with the top result (including when shuffle was already on before this search).
+Press `Enter` to play the highlighted video; the remaining
+videos play in shuffled order automatically or when you press `]`. If you pick
+a video yourself, it plays first. Press `[` to go back through the playback
+queue. The visible results stay in their original order so you can still browse
+them. Pressing `r` on the initial popular feed does not turn on shuffle or carry
+it over to a later search.
 
 Shuffle uses only the currently loaded search-result or playlist videos. It
 visits the other loaded videos once and then stops. Use `n` to load more pages;

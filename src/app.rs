@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use rand::Rng;
 use rand::seq::SliceRandom;
 
 use crate::models::{PlaybackMode, SavedPlaylist, Video};
@@ -42,6 +43,7 @@ pub enum PlaylistDialog {
 pub struct App {
     pub videos: Vec<Video>,
     pub selected: usize,
+    selection_explicit: bool,
     pub search_active: bool,
     pub search_query: String,
     pub playlist_dialog: PlaylistDialog,
@@ -77,6 +79,7 @@ impl App {
         Self {
             videos: Vec::new(),
             selected: 0,
+            selection_explicit: false,
             search_active: false,
             search_query: String::new(),
             playlist_dialog: PlaylistDialog::Closed,
@@ -112,6 +115,7 @@ impl App {
     pub fn replace_catalog_page(&mut self, page: CatalogPage, search: Option<String>) {
         self.videos = page.videos;
         self.selected = 0;
+        self.selection_explicit = false;
         self.next_page_token = page.next_page_token;
         self.feed_label = search.as_ref().map_or_else(
             || "Popular videos".to_owned(),
@@ -119,6 +123,9 @@ impl App {
         );
         self.active_search = search;
         self.active_playlist = None;
+        if self.shuffle_enabled && self.catalog_supports_queue() {
+            self.choose_shuffle_start();
+        }
         self.queue.clear();
         self.queue_index = None;
         self.status = format!("Loaded {} videos", self.videos.len());
@@ -132,6 +139,7 @@ impl App {
     ) {
         self.videos = page.videos;
         self.selected = 0;
+        self.selection_explicit = false;
         self.next_page_token = page.next_page_token;
         self.feed_label = format!(
             "Playlist · {}",
@@ -139,6 +147,9 @@ impl App {
         );
         self.active_search = None;
         self.active_playlist = Some(playlist_id);
+        if self.shuffle_enabled {
+            self.choose_shuffle_start();
+        }
         self.queue.clear();
         self.queue_index = None;
         self.status = format!("Loaded {} playlist videos", self.videos.len());
@@ -146,6 +157,18 @@ impl App {
 
     fn catalog_supports_queue(&self) -> bool {
         self.active_search.is_some() || self.active_playlist.is_some()
+    }
+
+    fn choose_shuffle_start(&mut self) {
+        self.choose_shuffle_start_with_rng(&mut rand::rng());
+    }
+
+    fn choose_shuffle_start_with_rng(&mut self, rng: &mut impl Rng) {
+        // The first result is only a default highlight, not a deliberate
+        // choice. Every loaded video, including the first, is eligible.
+        if !self.videos.is_empty() && !self.selection_explicit {
+            self.selected = rng.random_range(0..self.videos.len());
+        }
     }
 
     pub fn append_catalog_page(&mut self, page: CatalogPage) {
@@ -274,8 +297,11 @@ impl App {
                 {
                     self.prepare_queue(&video);
                 }
+                if self.shuffle_enabled && self.queue_index.is_none() {
+                    self.choose_shuffle_start();
+                }
                 self.status = if self.shuffle_enabled {
-                    "Shuffle on for playback; list order unchanged. Enter to play".to_owned()
+                    "Shuffle on: highlighted video plays first; list order unchanged".to_owned()
                 } else {
                     "Shuffle off for playback; list order unchanged".to_owned()
                 };
@@ -464,11 +490,14 @@ impl App {
             .selected
             .saturating_add_signed(delta)
             .min(self.videos.len() - 1);
+        self.selection_explicit = true;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use rand::SeedableRng;
+
     use super::*;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -609,7 +638,7 @@ mod tests {
         assert!(app.shuffle_enabled);
         assert_eq!(
             app.status,
-            "Shuffle on for playback; list order unchanged. Enter to play".to_owned()
+            "Shuffle on: highlighted video plays first; list order unchanged".to_owned()
         );
     }
 
@@ -624,6 +653,131 @@ mod tests {
             app.status,
             "Search (/) or open a playlist (P), then press r to shuffle playback".to_owned()
         );
+    }
+
+    #[test]
+    fn shuffle_picks_a_starting_video_when_search_result_is_only_default_selected() {
+        let mut app = App::new();
+        app.replace_catalog_page(
+            CatalogPage {
+                videos: ["latest", "middle", "oldest"]
+                    .into_iter()
+                    .map(|id| Video {
+                        id: id.to_owned(),
+                        ..Video::default()
+                    })
+                    .collect(),
+                next_page_token: None,
+            },
+            Some("Vision Radio".to_owned()),
+        );
+
+        app.handle_key(key(KeyCode::Char('r')));
+        assert!(app.shuffle_enabled);
+        assert!(app.selected < app.videos.len());
+        assert_eq!(app.videos[0].id, "latest");
+        let Action::Play(start) = app.handle_key(key(KeyCode::Enter)) else {
+            panic!("Enter should play the highlighted episode");
+        };
+        assert_eq!(start, app.videos[app.selected]);
+        app.prepare_queue(&start);
+        assert_eq!(app.queue[0].id, start.id);
+        assert_eq!(app.queue.len(), 3);
+    }
+
+    #[test]
+    fn shuffle_start_can_choose_any_loaded_video_including_the_first() {
+        let mut app = App::new();
+        app.videos = (0..3).map(|_| Video::default()).collect();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+        let mut chosen = [false; 3];
+
+        for _ in 0..100 {
+            app.choose_shuffle_start_with_rng(&mut rng);
+            chosen[app.selected] = true;
+        }
+        assert_eq!(chosen, [true, true, true]);
+    }
+
+    #[test]
+    fn shuffle_preserves_an_explicit_starting_video() {
+        let mut app = App::new();
+        app.replace_catalog_page(
+            CatalogPage {
+                videos: ["latest", "older", "oldest"]
+                    .into_iter()
+                    .map(|id| Video {
+                        id: id.to_owned(),
+                        ..Video::default()
+                    })
+                    .collect(),
+                next_page_token: None,
+            },
+            Some("Vision Radio".to_owned()),
+        );
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(app.selected, 1);
+
+        app.handle_key(key(KeyCode::Char('r')));
+        assert_eq!(app.selected, 1);
+        assert_eq!(
+            app.handle_key(key(KeyCode::Enter)),
+            Action::Play(app.videos[1].clone())
+        );
+    }
+
+    #[test]
+    fn shuffle_stays_effective_when_the_next_search_replaces_results() {
+        let mut app = App::new();
+        app.replace_catalog_page(
+            CatalogPage {
+                videos: Vec::new(),
+                next_page_token: None,
+            },
+            Some("first search".to_owned()),
+        );
+        app.handle_key(key(KeyCode::Char('r')));
+
+        app.replace_catalog_page(
+            CatalogPage {
+                videos: ["latest", "older"]
+                    .into_iter()
+                    .map(|id| Video {
+                        id: id.to_owned(),
+                        ..Video::default()
+                    })
+                    .collect(),
+                next_page_token: None,
+            },
+            Some("Vision Radio".to_owned()),
+        );
+        assert!(app.shuffle_enabled);
+        assert!(app.selected < app.videos.len());
+        assert_eq!(
+            app.handle_key(key(KeyCode::Enter)),
+            Action::Play(app.videos[app.selected].clone())
+        );
+    }
+
+    #[test]
+    fn playlist_shuffle_also_picks_a_start_when_selection_is_default() {
+        let mut app = App::new();
+        app.replace_playlist_page(
+            CatalogPage {
+                videos: ["first", "second"]
+                    .into_iter()
+                    .map(|id| Video {
+                        id: id.to_owned(),
+                        ..Video::default()
+                    })
+                    .collect(),
+                next_page_token: None,
+            },
+            "PL1234567890".to_owned(),
+            None,
+        );
+        app.handle_key(key(KeyCode::Char('r')));
+        assert!(app.selected < app.videos.len());
     }
 
     #[test]

@@ -4,6 +4,13 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 0.2.4 - 2026-09-29
+
+- Pick a random starting search or playlist video when shuffle is enabled
+  without an explicit selection, rather than always playing the first result.
+  A video selected with navigation still plays first, and the list order stays
+  unchanged.
+
 ## 0.2.3 - 2026-09-29
 
 - Explain that shuffle changes the playback queue, not the visible search or

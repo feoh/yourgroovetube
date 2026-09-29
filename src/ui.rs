@@ -316,6 +316,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
              [ / ]   Previous / next playback track\n\
              r       Shuffle playback after search/playlist\n\
                      Search/open playlist first; then press r\n\
+                     No choice? random start is highlighted\n\
                      List order stays; Enter starts queue\n\
              m       Toggle video / audio + thumbnail\n\
              Space   Pause or resume\n\
@@ -415,6 +416,7 @@ mod tests {
             let rendered = terminal.backend().to_string();
 
             assert!(rendered.contains("Search/open playlist first; then press r"));
+            assert!(rendered.contains("No choice? random start is highlighted"));
             assert!(rendered.contains("List order stays; Enter starts queue"));
             assert!(rendered.contains("Press any key to close help."));
         }
@@ -440,20 +442,25 @@ mod tests {
 
         app.replace_catalog_page(
             crate::provider::CatalogPage {
-                videos: vec![Video {
-                    id: "first".to_owned(),
-                    title: "First episode".to_owned(),
-                    ..Video::default()
-                }],
+                videos: ["First episode", "Second episode"]
+                    .into_iter()
+                    .map(|title| Video {
+                        id: title.to_owned(),
+                        title: title.to_owned(),
+                        ..Video::default()
+                    })
+                    .collect(),
                 next_page_token: None,
             },
             Some("Vision Radio".to_owned()),
         );
         dispatch_test_event(&mut terminal, &mut app, KeyEvent::from(KeyCode::Char('r')));
         assert!(app.shuffle_enabled);
+        assert!(app.selected < app.videos.len());
         let rendered = terminal.backend().to_string();
-        assert!(rendered.contains("Shuffle on for playback; list order unchanged"));
+        assert!(rendered.contains("Shuffle on: highlighted video plays first"));
         assert!(rendered.contains("First episode"));
+        assert!(rendered.contains("Second episode"));
     }
 
     #[test]
