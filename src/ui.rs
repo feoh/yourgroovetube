@@ -85,13 +85,13 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, artwork: Option<&mut ArtworkState>
         ),
     }
     if app.help_visible {
-        render_help(frame, centered_rect(60, 16, frame.area()));
+        render_help(frame, centered_rect(80, 19, frame.area()));
     }
 }
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let controls = if area.width >= 100 {
-        "  / search  P playlists  n more  [/] queued  r shuffle  m mode  Space pause  s save  ? help  q quit"
+        "  / search  P playlists  [/] skip  r shuffle play  ? help  q quit"
     } else {
         "  / search  ? help  q quit"
     };
@@ -312,9 +312,11 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
              Esc     Cancel text input\n\
              j/k     Move through videos\n\
              n       Load the next result page\n\
-             P       Open saved playlists (a add, d delete, o one-off)\n\
-             [ / ]   Previous / next queued video\n\
-             r       Toggle shuffle for loaded search or playlist videos\n\
+             P       Open saved playlists\n\
+             [ / ]   Previous / next playback track\n\
+             r       Shuffle playback after search/playlist\n\
+                     Search/open playlist first; then press r\n\
+                     List order stays; Enter starts queue\n\
              m       Toggle video / audio + thumbnail\n\
              Space   Pause or resume\n\
              s       Save current video to Plex directory\n\
@@ -397,6 +399,61 @@ mod tests {
         assert!(rendered.contains("yourgroovetube"));
         assert!(rendered.contains("audio + thumbnail") || rendered.contains("mode: video"));
         assert!(rendered.contains("Press / to search YouTube"));
+    }
+
+    #[test]
+    fn help_explains_shuffle_order_and_when_to_enable_it() {
+        for width in [60, 100] {
+            let backend = TestBackend::new(width, 24);
+            let mut terminal = match Terminal::new(backend) {
+                Ok(terminal) => terminal,
+                Err(never) => match never {},
+            };
+            let mut app = App::new();
+
+            dispatch_test_event(&mut terminal, &mut app, KeyEvent::from(KeyCode::Char('?')));
+            let rendered = terminal.backend().to_string();
+
+            assert!(rendered.contains("Search/open playlist first; then press r"));
+            assert!(rendered.contains("List order stays; Enter starts queue"));
+            assert!(rendered.contains("Press any key to close help."));
+        }
+    }
+
+    #[test]
+    fn shuffle_feedback_explains_the_popular_feed_and_playback_queue() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(never) => match never {},
+        };
+        let mut app = App::new();
+
+        dispatch_test_event(&mut terminal, &mut app, KeyEvent::from(KeyCode::Char('r')));
+        assert!(!app.shuffle_enabled);
+        assert!(
+            terminal
+                .backend()
+                .to_string()
+                .contains("then press r to shuffle playback")
+        );
+
+        app.replace_catalog_page(
+            crate::provider::CatalogPage {
+                videos: vec![Video {
+                    id: "first".to_owned(),
+                    title: "First episode".to_owned(),
+                    ..Video::default()
+                }],
+                next_page_token: None,
+            },
+            Some("Vision Radio".to_owned()),
+        );
+        dispatch_test_event(&mut terminal, &mut app, KeyEvent::from(KeyCode::Char('r')));
+        assert!(app.shuffle_enabled);
+        let rendered = terminal.backend().to_string();
+        assert!(rendered.contains("Shuffle on for playback; list order unchanged"));
+        assert!(rendered.contains("First episode"));
     }
 
     #[test]

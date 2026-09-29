@@ -210,7 +210,7 @@ but fails in the app, configure the same browser/profile as described in
 [Optional cookie extraction](#optional-cookie-extraction); the app does not
 inherit the options from your earlier command.
 
-## Planned keybindings
+## Keyboard controls
 
 | Key | Action |
 | --- | --- |
@@ -219,7 +219,7 @@ inherit the options from your earlier command.
 | `n` | Load the next result or playlist page |
 | `P` | Open saved playlists (`a` add, `d` delete, `o` one-off URL/ID) |
 | `[` / `]` | Play the previous/next queued video |
-| `r` | Toggle shuffle for loaded search or playlist videos |
+| `r` | Toggle shuffled playback after loading search results or a playlist; the visible list does not move |
 | `Enter` or `p` | Play the selected video |
 | `m` | Toggle video / audio-with-thumbnail mode |
 | `Space` | Pause or resume |
@@ -234,13 +234,19 @@ library with `j`/`k` and `Enter`. Playlist names are unique without regard to
 ASCII case, so adding the same name again updates it. Press `o` in the library
 to load a playlist without saving it.
 
-Shuffle applies to search-result or playlist videos currently loaded in the
-TUI; it is not available on the default popular feed. It starts with the
-selected video, visits every other loaded video once in randomized order, and
-then stops. Use `n` to load additional search-result or playlist pages; pages
-loaded while queued playback is active are appended without reordering tracks
-already visited. A newly loaded page is randomized before appending when
-shuffle is on and retains provider order when shuffle is off.
+To shuffle a search or playlist, first load it with `/` or `P`, then press
+`r` (look for `shuffle` in the header). Select a video and press `Enter` to
+start playback. That video plays first; the following videos play in shuffled
+order automatically or when you press `]`. Press `[` to go back through the
+playback queue. The visible results stay in their original order so you can
+still browse them. Pressing `r` on the initial popular feed does not turn on
+shuffle or carry it over to a later search.
+
+Shuffle uses only the currently loaded search-result or playlist videos. It
+visits the other loaded videos once and then stops. Use `n` to load more pages;
+when a queue is active, new pages are appended without reordering tracks
+already visited. New pages are randomized before appending when shuffle is on
+and retain provider order when shuffle is off.
 
 ## Implementation ranking
 

@@ -4,6 +4,12 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 0.2.3 - 2026-09-29
+
+- Explain that shuffle changes the playback queue, not the visible search or
+  playlist order. Help and status messages now guide users to load results
+  before pressing `r`, then select a video to begin shuffled playback.
+
 ## 0.2.2 - 2026-09-24
 
 - Clarify that browser cookies are opt-in, but YouTube may consistently block

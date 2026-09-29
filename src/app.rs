@@ -274,19 +274,16 @@ impl App {
                 {
                     self.prepare_queue(&video);
                 }
-                let catalog_label = if self.active_search.is_some() {
-                    "Search result"
+                self.status = if self.shuffle_enabled {
+                    "Shuffle on for playback; list order unchanged. Enter to play".to_owned()
                 } else {
-                    "Playlist"
+                    "Shuffle off for playback; list order unchanged".to_owned()
                 };
-                self.status = format!(
-                    "{catalog_label} shuffle {} for loaded videos",
-                    if self.shuffle_enabled { "on" } else { "off" }
-                );
                 Action::None
             }
             KeyCode::Char('r') => {
-                self.status = "Shuffle is available in search results or playlists".to_owned();
+                self.status = "Search (/) or open a playlist (P), then press r to shuffle playback"
+                    .to_owned();
                 Action::None
             }
             KeyCode::Char(' ') => Action::TogglePause,
@@ -612,7 +609,7 @@ mod tests {
         assert!(app.shuffle_enabled);
         assert_eq!(
             app.status,
-            "Search result shuffle on for loaded videos".to_owned()
+            "Shuffle on for playback; list order unchanged. Enter to play".to_owned()
         );
     }
 
@@ -625,7 +622,7 @@ mod tests {
         assert!(!app.shuffle_enabled);
         assert_eq!(
             app.status,
-            "Shuffle is available in search results or playlists".to_owned()
+            "Search (/) or open a playlist (P), then press r to shuffle playback".to_owned()
         );
     }
 
